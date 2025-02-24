@@ -10,6 +10,36 @@ interface PropertyModalProps {
 }
 
 export default function PropertyModal({ property, isOpen, onClose }: PropertyModalProps) {
+  // Get construction status
+  const getConstructionStatus = () => {
+    const info = property.construction_info;
+    if (!info) return null;
+
+    if (info.has_act16) {
+      return { type: 'completed', text: 'With Act 16', details: info.act16_details };
+    }
+
+    if (info.act16_plan_date) {
+      return {
+        type: 'planned',
+        text: `Act 16 planned: ${new Date(info.act16_plan_date).toLocaleDateString('bg-BG', { month: 'long', year: 'numeric' })}`,
+        details: info.act16_details
+      };
+    }
+
+    // Check description for Act status
+    const description = property.description?.toLowerCase() || '';
+    if (description.includes('акт 15') || description.includes('act 15')) {
+      return { type: 'progress', text: 'Act 15', details: info.act16_details };
+    } else if (description.includes('акт 14') || description.includes('act 14')) {
+      return { type: 'progress', text: 'Act 14', details: info.act16_details };
+    }
+
+    return { type: 'progress', text: 'Under Construction', details: info.act16_details };
+  };
+
+  const constructionStatus = getConstructionStatus();
+
   return (
     <Dialog
       open={isOpen}
@@ -29,7 +59,7 @@ export default function PropertyModal({ property, isOpen, onClose }: PropertyMod
             <div className="flex items-center gap-4">
               <div className="text-right">
                 <p className="text-xl font-bold text-gray-900">
-                  {property.price_value.toLocaleString()} {property.price_currency}
+                  {property.price_value?.toLocaleString()} {property.price_currency}
                 </p>
                 <p className="text-sm text-gray-500">
                   {property.includes_vat ? 'Including VAT' : 'Excluding VAT'}
@@ -49,7 +79,7 @@ export default function PropertyModal({ property, isOpen, onClose }: PropertyMod
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 h-full">
               {/* Left side - Image slider */}
               <div className="relative h-[60vh] lg:h-[80vh] bg-gray-100">
-                <ImageSlider images={property.images.map(img => img.url)} />
+                <ImageSlider images={property.images} />
               </div>
 
               {/* Right side - Property details */}
@@ -81,7 +111,7 @@ export default function PropertyModal({ property, isOpen, onClose }: PropertyMod
                   <div className="mb-6">
                     <h3 className="font-semibold text-gray-900 mb-2">Construction</h3>
                     <div className="bg-gray-50 rounded-lg p-4">
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-2 gap-4 mb-4">
                         <div>
                           <p className="text-sm text-gray-600">Type</p>
                           <p className="font-medium">{property.construction_info.type}</p>
@@ -92,6 +122,37 @@ export default function PropertyModal({ property, isOpen, onClose }: PropertyMod
                             {property.construction_info.has_central_heating ? 'Yes' : 'No'}
                           </p>
                         </div>
+                      </div>
+
+                      {/* Construction Status */}
+                      <div className="border-t border-gray-200 pt-4">
+                        <p className="text-sm text-gray-600 mb-2">Status</p>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {constructionStatus && (
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                              constructionStatus.type === 'completed' ? 'bg-green-100 text-green-800' :
+                              constructionStatus.type === 'planned' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-blue-100 text-blue-800'
+                            }`}>
+                              {constructionStatus.text}
+                            </span>
+                          )}
+                          {property.construction_info.is_renovated && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              Renovated
+                            </span>
+                          )}
+                          {property.construction_info.is_furnished && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                              Furnished
+                            </span>
+                          )}
+                        </div>
+                        {constructionStatus?.details && (
+                          <div className="text-sm text-gray-700 bg-white rounded p-3 border border-gray-100">
+                            {constructionStatus.details}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -109,6 +170,16 @@ export default function PropertyModal({ property, isOpen, onClose }: PropertyMod
                   </div>
                 )}
 
+                {/* Description */}
+                {property.description && (
+                  <div className="mb-6">
+                    <h3 className="font-semibold text-gray-900 mb-2">Description</h3>
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <p className="text-gray-600 whitespace-pre-line">{property.description}</p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Features */}
                 {property.features.length > 0 && (
                   <div className="mb-6">
@@ -122,16 +193,6 @@ export default function PropertyModal({ property, isOpen, onClose }: PropertyMod
                           {feature}
                         </span>
                       ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Description */}
-                {property.description && (
-                  <div className="mb-6">
-                    <h3 className="font-semibold text-gray-900 mb-2">Description</h3>
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <p className="text-gray-600 whitespace-pre-line">{property.description}</p>
                     </div>
                   </div>
                 )}

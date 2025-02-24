@@ -15,10 +15,10 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-def analyze_image(image_url: str) -> Tuple[bool, bool]:
+def analyze_image(image_url: str) -> Tuple[bool, bool, bool, str]:
     """
     Analyze a property image using OpenAI's Vision API to determine if it's renovated and furnished.
-    Returns a tuple of (is_renovated, is_furnished)
+    Returns a tuple of (is_renovated, is_furnished, is_interior, confidence)
     """
     try:
         print(f"Analyzing image URL: {image_url}")
@@ -30,12 +30,40 @@ def analyze_image(image_url: str) -> Tuple[bool, bool]:
                     "content": [
                         {
                             "type": "text",
-                            "text": """Analyze this property image and determine:
-1. Is it renovated? Look for signs of recent renovation like modern finishes, new paint, updated fixtures.
-   Exclude furniture from this assessment.
-2. Is it furnished? Look for presence of furniture, appliances, and decor.
+                            "text": """First, determine if this image shows the interior of an apartment/flat:
+1. Is this an interior shot (showing actual rooms inside the property)?
+   Answer NO if the image shows:
+   - Building exterior, facade, or surroundings
+   - Architectural floor plans or drawings
+   - Construction plans or sketches
+   - Any type of 2D layout or blueprint
+   
+   Answer YES only if it shows actual photographs of interior rooms (living room, bedroom, kitchen, etc)
+
+If it IS an interior photograph, then carefully analyze:
+
+2. Is it renovated? Look for ANY of these signs of unfinished work or needed renovation:
+   - Exposed bricks or concrete
+   - Missing or unfinished doors/windows
+   - Rough/unfinished plaster
+   - Missing paint or bare walls
+   - Exposed pipes or wiring
+   - Unfinished flooring
+   - Construction debris
+   - Missing bathroom fixtures
+   - Missing kitchen elements
+   If ANY of these are visible, mark as NOT renovated, even if parts of the room look finished.
+   Only mark as renovated if the space is COMPLETELY finished with no visible construction work needed.
+
+3. Is it furnished? Look for:
+   - Furniture (beds, sofas, tables, chairs)
+   - Major appliances (fridge, stove, washing machine)
+   - Decor items
+   Must have multiple pieces of furniture to be considered furnished.
 
 Respond in this exact format:
+INTERIOR: yes/no
+[Only if INTERIOR is yes, include these:]
 RENOVATED: true/false
 FURNISHED: true/false
 CONFIDENCE: high/medium/low"""
@@ -56,29 +84,40 @@ CONFIDENCE: high/medium/low"""
         result = response.choices[0].message.content
         lines = result.strip().split('\n')
         
+        is_interior = False
         is_renovated = False
         is_furnished = False
         confidence = 'low'
         
         for line in lines:
-            if line.startswith('RENOVATED:'):
+            if line.startswith('INTERIOR:'):
+                is_interior = 'yes' in line.lower()
+            elif line.startswith('RENOVATED:'):
                 is_renovated = 'true' in line.lower()
             elif line.startswith('FURNISHED:'):
                 is_furnished = 'true' in line.lower()
             elif line.startswith('CONFIDENCE:'):
                 confidence = line.split(':')[1].strip().lower()
         
-        print(f"Analysis result: renovated={is_renovated}, furnished={is_furnished}, confidence={confidence}")
+        print(f"Analysis result: interior={is_interior}, confidence={confidence}")
+        if is_interior:
+            print(f"Interior analysis: renovated={is_renovated}, furnished={is_furnished}")
+            if not is_renovated:
+                print("Not renovated: Image shows signs of unfinished work or needed renovation")
+        else:
+            print("Not interior: Exterior shot, floor plan, or blueprint")
         
         # Only return results if confidence is medium or high
         if confidence == 'low':
-            return None, None
+            print("Skipping: Low confidence in analysis")
+            return None, None, None, None
             
-        return is_renovated, is_furnished
+        # Return all values regardless of interior status
+        return is_renovated, is_furnished, is_interior, confidence
         
     except Exception as e:
         print(f"Error analyzing image {image_url}: {str(e)}")
-        return None, None
+        return None, None, None, None
 
 def get_properties_to_analyze():
     """Get properties that haven't been analyzed yet"""
@@ -111,7 +150,7 @@ def get_properties_to_analyze():
         cur.close()
         conn.close()
 
-def update_property_analysis(property_id: str, is_renovated: bool, is_furnished: bool):
+def update_property_analysis(property_id: str, is_renovated: bool, is_furnished: bool, is_interior: bool, confidence: str):
     """Update the property with analysis results"""
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
@@ -128,11 +167,13 @@ def update_property_analysis(property_id: str, is_renovated: bool, is_furnished:
         cur.execute("""
             UPDATE construction_info
             SET is_renovated = %s,
-                is_furnished = %s
+                is_furnished = %s,
+                is_interior = %s,
+                confidence = %s
             WHERE property_id = %s
-        """, (is_renovated, is_furnished, property_id))
+        """, (is_renovated, is_furnished, is_interior, confidence, property_id))
         conn.commit()
-        print(f"Updated property {property_id}: renovated={is_renovated}, furnished={is_furnished}")
+        print(f"Updated property {property_id}: renovated={is_renovated}, furnished={is_furnished}, interior={is_interior}, confidence={confidence}")
     except Exception as e:
         print(f"Error updating property {property_id}: {str(e)}")
         conn.rollback()
@@ -152,10 +193,10 @@ def main():
     for property_id, image_url in properties:
         print(f"\nAnalyzing property {property_id}")
         print(f"Image URL: {image_url}")
-        is_renovated, is_furnished = analyze_image(image_url)
+        is_renovated, is_furnished, is_interior, confidence = analyze_image(image_url)
         
         if is_renovated is not None and is_furnished is not None:
-            update_property_analysis(property_id, is_renovated, is_furnished)
+            update_property_analysis(property_id, is_renovated, is_furnished, is_interior, confidence)
         else:
             print(f"Skipping property {property_id} due to low confidence or error")
             

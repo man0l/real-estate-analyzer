@@ -24,6 +24,13 @@ export interface Property {
     type: string | null;
     year: number | null;
     has_central_heating: boolean | null;
+    is_renovated: boolean | null;
+    is_furnished: boolean | null;
+    has_act16: boolean | null;
+    is_interior: boolean | null;
+    confidence: 'high' | 'medium' | 'low' | null;
+    act16_plan_date: string | null;
+    act16_details: string | null;
   };
   contact_info?: {
     broker_name: string | null;
@@ -36,6 +43,7 @@ export interface Property {
   features: string[];
   images: {
     url: string;
+    storage_url: string | null;
     position: number | null;
   }[];
 }

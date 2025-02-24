@@ -21,6 +21,12 @@ export default function Home() {
     minYear: '',
     maxYear: '',
     isPrivateSeller: null as boolean | null,
+    isRenovated: null as boolean | null,
+    isFurnished: null as boolean | null,
+    hasAct16: null as boolean | null,
+    minAct16Date: '',
+    maxAct16Date: '',
+    propertyIds: ''
   });
 
   // Add stats state
@@ -67,10 +73,18 @@ export default function Home() {
           contact_info:contact_info(*),
           monthly_payment:monthly_payments(*),
           features:features(feature),
-          images:images(url, position)
+          images:images(url, storage_url, position)
         `)
         .neq('id', 'metadata')
         .order('price_value', { ascending: true });
+
+      // Apply property IDs filter if provided
+      if (filters.propertyIds.trim()) {
+        const ids = filters.propertyIds.split(',').map(id => id.trim()).filter(id => id);
+        if (ids.length > 0) {
+          query = query.in('id', ids);
+        }
+      }
 
       // Apply numeric filters with null checks
       if (filters.minPrice) {
@@ -116,18 +130,22 @@ export default function Home() {
         });
       }
 
-      console.log('Executing query...');
-      const { data, error } = await query;
+      console.log('Executing initial query...');
+      const { data: initialData, error: initialError } = await query;
 
-      if (error) {
-        console.error('Query error:', error);
-        throw error;
+      if (initialError) {
+        console.error('Initial query error:', initialError);
+        throw initialError;
       }
-      
-      console.log('Got', data?.length, 'results');
-      
+
+      if (!initialData) {
+        console.log('No data returned from query');
+        setProperties([]);
+        return;
+      }
+
       // Transform the data
-      let transformedData = data.map(property => ({
+      let transformedData = initialData.map(property => ({
         ...property,
         features: property.features?.map((f: { feature: string }) => f.feature) || [],
         images: property.images?.sort((a: { position: number | null }, b: { position: number | null }) => 
@@ -147,13 +165,56 @@ export default function Home() {
           
           return true;
         });
-        console.log('After year filtering:', transformedData.length, 'results');
       }
 
+      // Apply renovation status filter
+      if (filters.isRenovated !== null) {
+        console.log('Filtering by renovation status:', filters.isRenovated);
+        transformedData = transformedData.filter(property => 
+          property.construction_info?.is_renovated === filters.isRenovated
+        );
+      }
+
+      // Apply furnishing status filter
+      if (filters.isFurnished !== null) {
+        console.log('Filtering by furnishing status:', filters.isFurnished);
+        transformedData = transformedData.filter(property => 
+          property.construction_info?.is_furnished === filters.isFurnished
+        );
+      }
+
+      // Apply Act 16 status filter
+      if (filters.hasAct16 !== null) {
+        console.log('Filtering by Act 16 status:', filters.hasAct16);
+        transformedData = transformedData.filter(property => 
+          property.construction_info?.has_act16 === filters.hasAct16
+        );
+      }
+
+      // Apply Act 16 planned date filter
+      if (filters.minAct16Date) {
+        const minDate = new Date(filters.minAct16Date);
+        console.log('Filtering by min Act 16 date:', minDate);
+        transformedData = transformedData.filter(property => {
+          const planDate = property.construction_info?.act16_plan_date;
+          if (!planDate) return false;
+          return new Date(planDate) >= minDate;
+        });
+      }
+      if (filters.maxAct16Date) {
+        const maxDate = new Date(filters.maxAct16Date);
+        console.log('Filtering by max Act 16 date:', maxDate);
+        transformedData = transformedData.filter(property => {
+          const planDate = property.construction_info?.act16_plan_date;
+          if (!planDate) return false;
+          return new Date(planDate) <= maxDate;
+        });
+      }
+
+      console.log('Final results:', transformedData.length);
       setProperties(transformedData);
     } catch (error) {
       console.error('Error fetching properties:', error);
-      // You might want to set an error state here
     } finally {
       setLoading(false);
     }
@@ -164,6 +225,19 @@ export default function Home() {
       <h1 className="text-3xl font-bold mb-8">Property Viewer</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Property IDs (comma-separated)
+          </label>
+          <input
+            type="text"
+            placeholder="e.g., 1b123,1c456"
+            className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            value={filters.propertyIds}
+            onChange={(e) => setFilters({ ...filters, propertyIds: e.target.value })}
+          />
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Price Range (EUR)
@@ -282,6 +356,91 @@ export default function Home() {
           </select>
         </div>
 
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Renovation Status
+          </label>
+          <select
+            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            value={filters.isRenovated === null ? '' : filters.isRenovated.toString()}
+            onChange={(e) => {
+              const value = e.target.value;
+              setFilters({ 
+                ...filters, 
+                isRenovated: value === '' ? null : value === 'true'
+              });
+            }}
+          >
+            <option value="">All Properties</option>
+            <option value="true">Renovated</option>
+            <option value="false">Needs Renovation</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Furnishing Status
+          </label>
+          <select
+            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            value={filters.isFurnished === null ? '' : filters.isFurnished.toString()}
+            onChange={(e) => {
+              const value = e.target.value;
+              setFilters({ 
+                ...filters, 
+                isFurnished: value === '' ? null : value === 'true'
+              });
+            }}
+          >
+            <option value="">All Properties</option>
+            <option value="true">Furnished</option>
+            <option value="false">Unfurnished</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Building Status
+          </label>
+          <select
+            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            value={filters.hasAct16 === null ? '' : filters.hasAct16.toString()}
+            onChange={(e) => {
+              const value = e.target.value;
+              setFilters({ 
+                ...filters, 
+                hasAct16: value === '' ? null : value === 'true'
+              });
+            }}
+          >
+            <option value="">All Buildings</option>
+            <option value="true">With Act 16</option>
+            <option value="false">Under Construction</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Planned Completion
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="date"
+              placeholder="From"
+              className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              value={filters.minAct16Date}
+              onChange={(e) => setFilters({ ...filters, minAct16Date: e.target.value })}
+            />
+            <input
+              type="date"
+              placeholder="To"
+              className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              value={filters.maxAct16Date}
+              onChange={(e) => setFilters({ ...filters, maxAct16Date: e.target.value })}
+            />
+          </div>
+        </div>
+
         <div className="flex items-end">
           <button
             onClick={() => setFilters({
@@ -294,6 +453,12 @@ export default function Home() {
               minYear: '',
               maxYear: '',
               isPrivateSeller: null,
+              isRenovated: null,
+              isFurnished: null,
+              hasAct16: null,
+              minAct16Date: '',
+              maxAct16Date: '',
+              propertyIds: '',
             })}
             className="w-full py-2 px-4 text-sm text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
           >

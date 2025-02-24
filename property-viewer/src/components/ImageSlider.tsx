@@ -6,7 +6,10 @@ import 'slick-carousel/slick/slick.css';
 import 'slick-carousel/slick/slick-theme.css';
 
 interface ImageSliderProps {
-  images: string[];
+  images: {
+    url: string;
+    storage_url: string | null;
+  }[];
 }
 
 export default function ImageSlider({ images }: ImageSliderProps) {
@@ -38,7 +41,7 @@ export default function ImageSlider({ images }: ImageSliderProps) {
           {images.map((image, index) => (
             <div key={index} className="relative h-full aspect-[4/3]">
               <Image
-                src={image}
+                src={image.storage_url || image.url}
                 alt={`Property image ${index + 1}`}
                 fill
                 sizes="(max-width: 1024px) 100vw, 50vw"
@@ -74,7 +77,7 @@ export default function ImageSlider({ images }: ImageSliderProps) {
                 {images.map((image, index) => (
                   <div key={index} className="relative h-[80vh]">
                     <Image
-                      src={image}
+                      src={image.storage_url || image.url}
                       alt={`Property image ${index + 1}`}
                       fill
                       sizes="100vw"
