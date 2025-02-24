@@ -16,94 +16,181 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Global flags for graceful shutdown
-should_exit = False
-is_shutting_down = False
-
 # Database configuration
 DB_URL = os.getenv('DATABASE_URL', "postgresql://postgres.mbqpxqpvjpimntzjthcc:[YOUR-PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres")
 
 def init_database():
-    """Initialize database tables if they don't exist"""
+    """Initialize database connection and verify it's working"""
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
     
     try:
-        # Create versions table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS crawl_versions (
-                id SERIAL PRIMARY KEY,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                metadata JSONB,
-                total_properties INTEGER,
-                is_complete BOOLEAN DEFAULT FALSE
-            )
-        """)
-        
-        # Create properties table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS properties (
-                id VARCHAR(50),
-                version_id INTEGER REFERENCES crawl_versions(id),
-                data JSONB,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (id, version_id)
-            )
-        """)
-        
-        conn.commit()
+        # Test the connection
+        cur.execute("SELECT 1")
+        print("Database connection verified successfully")
     except Exception as e:
-        print(f"Error initializing database: {str(e)}")
-        conn.rollback()
+        print(f"Error connecting to database: {str(e)}")
     finally:
         cur.close()
         conn.close()
 
-def create_new_version(metadata):
-    """Create a new crawl version and return its ID"""
+def save_property(property_data):
+    """Save a single property to the database using normalized tables"""
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
     
     try:
+        # Insert into properties table
         cur.execute("""
-            INSERT INTO crawl_versions (metadata, total_properties, is_complete)
-            VALUES (%s, 0, FALSE)
-            RETURNING id
-        """, (Json(metadata),))
-        
-        version_id = cur.fetchone()[0]
-        conn.commit()
-        return version_id
-    except Exception as e:
-        print(f"Error creating new version: {str(e)}")
-        conn.rollback()
-        return None
-    finally:
-        cur.close()
-        conn.close()
+            INSERT INTO properties (
+                id, type, url, price_value, price_currency, 
+                includes_vat, area_m2, views, last_modified, image_count, description
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE SET
+                type = EXCLUDED.type,
+                url = EXCLUDED.url,
+                price_value = EXCLUDED.price_value,
+                price_currency = EXCLUDED.price_currency,
+                includes_vat = EXCLUDED.includes_vat,
+                area_m2 = EXCLUDED.area_m2,
+                views = EXCLUDED.views,
+                last_modified = EXCLUDED.last_modified,
+                image_count = EXCLUDED.image_count,
+                description = EXCLUDED.description
+        """, (
+            property_data.get('id'),
+            property_data.get('type'),
+            property_data.get('url'),
+            property_data.get('price', {}).get('value'),
+            property_data.get('price', {}).get('currency'),
+            property_data.get('price', {}).get('includes_vat'),
+            property_data.get('details', {}).get('area'),
+            property_data.get('views'),
+            property_data.get('last_modified'),
+            property_data.get('image_count'),
+            property_data.get('description')
+        ))
 
-def save_property(property_data, version_id):
-    """Save a single property to the database"""
-    conn = psycopg2.connect(DB_URL)
-    cur = conn.cursor()
-    
-    try:
-        cur.execute("""
-            INSERT INTO properties (id, version_id, data)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (id, version_id) DO UPDATE
-            SET data = EXCLUDED.data
-        """, (property_data['id'], version_id, Json(property_data)))
-        
-        # Update total properties count
-        cur.execute("""
-            UPDATE crawl_versions
-            SET total_properties = (
-                SELECT COUNT(*) FROM properties
-                WHERE version_id = %s
-            )
-            WHERE id = %s
-        """, (version_id, version_id))
+        # Insert into locations table
+        if property_data.get('location'):
+            cur.execute("""
+                INSERT INTO locations (property_id, city, district)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (property_id) DO UPDATE SET
+                    city = EXCLUDED.city,
+                    district = EXCLUDED.district
+            """, (
+                property_data['id'],
+                property_data['location'].get('city'),
+                property_data['location'].get('district')
+            ))
+
+        # Insert into floor_info table
+        if property_data.get('details', {}).get('floor'):
+            cur.execute("""
+                INSERT INTO floor_info (property_id, current_floor, total_floors)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (property_id) DO UPDATE SET
+                    current_floor = EXCLUDED.current_floor,
+                    total_floors = EXCLUDED.total_floors
+            """, (
+                property_data['id'],
+                property_data['details']['floor'].get('current'),
+                property_data['details']['floor'].get('total')
+            ))
+
+        # Insert into construction_info table
+        if property_data.get('details', {}).get('construction') or property_data.get('details', {}).get('central_heating') is not None:
+            construction = property_data.get('details', {}).get('construction', {})
+            cur.execute("""
+                INSERT INTO construction_info (
+                    property_id, type, year, has_central_heating
+                ) VALUES (%s, %s, %s, %s)
+                ON CONFLICT (property_id) DO UPDATE SET
+                    type = EXCLUDED.type,
+                    year = EXCLUDED.year,
+                    has_central_heating = EXCLUDED.has_central_heating
+            """, (
+                property_data['id'],
+                construction.get('type'),
+                construction.get('year'),
+                property_data.get('details', {}).get('central_heating')
+            ))
+
+        # Insert into contact_info table
+        if property_data.get('contact'):
+            cur.execute("""
+                INSERT INTO contact_info (property_id, broker_name, phone)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (property_id) DO UPDATE SET
+                    broker_name = EXCLUDED.broker_name,
+                    phone = EXCLUDED.phone
+            """, (
+                property_data['id'],
+                property_data['contact'].get('broker_name'),
+                property_data['contact'].get('phone')
+            ))
+
+        # Insert into monthly_payments table
+        if property_data.get('monthly_payment'):
+            cur.execute("""
+                INSERT INTO monthly_payments (property_id, value, currency)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (property_id) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    currency = EXCLUDED.currency
+            """, (
+                property_data['id'],
+                property_data['monthly_payment'].get('value'),
+                property_data['monthly_payment'].get('currency')
+            ))
+
+        # Insert into features table
+        if property_data.get('features'):
+            # First delete existing features
+            cur.execute("""
+                DELETE FROM features
+                WHERE property_id = %s
+            """, (property_data['id'],))
+            conn.commit()  # Commit the delete
+            
+            # Insert new features in a new transaction
+            for feature in property_data['features']:
+                try:
+                    cur.execute("""
+                        INSERT INTO features (property_id, feature)
+                        VALUES (%s, %s)
+                        ON CONFLICT (property_id, feature) DO NOTHING
+                    """, (property_data['id'], feature))
+                    conn.commit()  # Commit each feature insert separately
+                except Exception as e:
+                    print(f"Error inserting feature {feature}: {str(e)}")
+                    conn.rollback()  # Rollback only the failed feature
+                    continue
+
+        # Insert into images table
+        if property_data.get('images'):
+            # First delete existing images
+            cur.execute("""
+                DELETE FROM images
+                WHERE property_id = %s
+            """, (property_data['id'],))
+            conn.commit()  # Commit the delete
+            
+            # Insert new images in a new transaction
+            for idx, image_url in enumerate(property_data['images']):
+                try:
+                    cur.execute("""
+                        INSERT INTO images (property_id, url, position)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (property_id, url) DO UPDATE SET
+                            position = EXCLUDED.position
+                    """, (property_data['id'], image_url, idx))
+                    conn.commit()  # Commit each image insert separately
+                except Exception as e:
+                    print(f"Error inserting image {image_url}: {str(e)}")
+                    conn.rollback()  # Rollback only the failed image
+                    continue
         
         conn.commit()
     except Exception as e:
@@ -112,57 +199,6 @@ def save_property(property_data, version_id):
     finally:
         cur.close()
         conn.close()
-
-def complete_version(version_id):
-    """Mark a crawl version as complete"""
-    conn = psycopg2.connect(DB_URL)
-    cur = conn.cursor()
-    
-    try:
-        cur.execute("""
-            UPDATE crawl_versions
-            SET is_complete = TRUE
-            WHERE id = %s
-        """, (version_id,))
-        
-        conn.commit()
-    except Exception as e:
-        print(f"Error completing version: {str(e)}")
-        conn.rollback()
-    finally:
-        cur.close()
-        conn.close()
-
-def signal_handler(signum, frame):
-    global should_exit, is_shutting_down
-    if is_shutting_down:
-        print("\nForce quitting...")
-        sys.exit(1)
-    else:
-        print("\nReceived interrupt signal. Finishing current property and saving results...")
-        should_exit = True
-
-signal.signal(signal.SIGINT, signal_handler)
-
-def save_partial_results(properties, metadata, filename='property_data.json'):
-    """Save current results to file"""
-    global is_shutting_down
-    
-    try:
-        is_shutting_down = True
-        result = {
-            'metadata': metadata,
-            'properties': properties,
-            'is_complete': False,
-            'total_scraped': len(properties)
-        }
-        
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-        
-        print(f"\nResults saved to {filename}")
-    finally:
-        is_shutting_down = False
 
 def download_image(url, property_id, image_index, save_dir):
     try:
@@ -228,9 +264,6 @@ def extract_metadata(soup):
     return metadata
 
 def parse_detail_page(page, property_id):
-    if should_exit:
-        return None
-        
     property_data = {}
     
     try:
@@ -265,10 +298,19 @@ def parse_detail_page(page, property_id):
             price_match = re.search(r'(\d+(?:[\s,]\d+)*)\s*EUR', price_elem)
             if price_match:
                 price = price_match.group(1).replace(' ', '')
+                
+                # Check for VAT inclusion
+                includes_vat = False
+                cenakv_elem = soup.find('span', id='cenakv')
+                if cenakv_elem and cenakv_elem.find_next_sibling():
+                    next_div = cenakv_elem.find_next_sibling()
+                    if next_div and "Цената е с включено ДДС" in next_div.get_text():
+                        includes_vat = True
+                
                 property_data['price'] = {
                     'value': int(price),
                     'currency': 'EUR',
-                    'includes_vat': True
+                    'includes_vat': includes_vat
                 }
         
         # Price per square meter
@@ -314,14 +356,42 @@ def parse_detail_page(page, property_id):
                 }
         
         # Construction type and year
-        construction_elem = soup.find(string=re.compile(r'Строителство:.*\d{4}'))
-        if construction_elem:
-            type_match = re.search(r'Строителство:\s*(.*?),\s*(\d{4})', construction_elem)
+        print(f"\nDebug: Searching for construction info in property {property_id}")
+        
+        # Find the construction info by looking for the label and getting its parent's text
+        construction_label = soup.find(string=lambda text: text and text.strip() == 'Строителство:')
+        if construction_label and construction_label.parent:
+            construction_text = construction_label.parent.get_text().strip()
+            print(f"Debug: Found construction text: '{construction_text}'")
+            
+            # Parse using the format "Строителство: TYPE, YEAR г."
+            type_match = re.search(r'Строителство:\s*(.*?),\s*(\d{4})\s*г\.?', construction_text)
             if type_match:
+                construction_type = type_match.group(1).strip()
+                construction_year = int(type_match.group(2))
+                print(f"Debug: Parsed construction - Type: {construction_type}, Year: {construction_year}")
+                
                 property_data['details']['construction'] = {
-                    'type': type_match.group(1),
-                    'year': int(type_match.group(2))
+                    'type': construction_type,
+                    'year': construction_year
                 }
+            else:
+                # Try alternative format without "г." suffix
+                type_match = re.search(r'Строителство:\s*(.*?)(?:,\s*(\d{4}))?', construction_text)
+                if type_match:
+                    construction_type = type_match.group(1).strip() if type_match.group(1) else None
+                    construction_year = int(type_match.group(2)) if type_match.group(2) else None
+                    print(f"Debug: Parsed construction (alt format) - Type: {construction_type}, Year: {construction_year}")
+                    
+                    if construction_type or construction_year:
+                        property_data['details']['construction'] = {
+                            'type': construction_type,
+                            'year': construction_year
+                        }
+                else:
+                    print(f"Debug: Could not parse construction info from: '{construction_text}'")
+        else:
+            print(f"Debug: No construction info found for property {property_id}")
         
         # Heating
         heating_elem = soup.find(string=re.compile(r'ТЕЦ:'))
@@ -329,7 +399,21 @@ def parse_detail_page(page, property_id):
             property_data['details']['central_heating'] = 'ДА' in heating_elem
         
         # Description
-        description_elem = soup.find('div', class_='description')
+        try:
+            # Try to find and click the "show more" link
+            show_more = page.query_selector('#dots_link_more')
+            if show_more:
+                show_more.click()
+                # Wait a moment for the content to update
+                page.wait_for_timeout(500)
+        except Exception as e:
+            print(f"Note: Could not expand description: {str(e)}")
+        
+        # Get updated content after potential expansion
+        content = page.content()
+        soup = BeautifulSoup(content, 'html.parser')
+        
+        description_elem = soup.find(id='description_div')
         if description_elem:
             property_data['description'] = description_elem.get_text(strip=True)
         
@@ -367,8 +451,6 @@ def parse_detail_page(page, property_id):
         images = []
         img_elements = soup.find_all('img', src=re.compile(r'photos.*\.jpg'))
         for img in img_elements:
-            if should_exit:
-                break
             img_url = urljoin('https://www.imot.bg/', img['src'])
             images.append(img_url)
         
@@ -401,27 +483,7 @@ def get_total_pages(soup):
         print(f"Error getting total pages: {str(e)}")
     return 1
 
-def get_existing_properties(version_id):
-    """Get list of already processed property IDs for this version"""
-    conn = psycopg2.connect(DB_URL)
-    cur = conn.cursor()
-    
-    try:
-        cur.execute("""
-            SELECT id FROM properties
-            WHERE version_id = %s
-        """, (version_id,))
-        
-        existing_ids = {row[0] for row in cur.fetchall()}
-        return existing_ids
-    except Exception as e:
-        print(f"Error getting existing properties: {str(e)}")
-        return set()
-    finally:
-        cur.close()
-        conn.close()
-
-def parse_properties(page, base_url, version_id):
+def parse_properties(page, base_url):
     metadata = {}
     
     try:
@@ -438,10 +500,6 @@ def parse_properties(page, base_url, version_id):
         
         # Process each page
         for page_num in range(1, total_pages + 1):
-            if should_exit:
-                print("\nSaving results and exiting...")
-                break
-                
             if page_num > 1:
                 # Navigate to the next page
                 next_url = f"{base_url}&f1={page_num}"
@@ -460,9 +518,6 @@ def parse_properties(page, base_url, version_id):
             print(f"Processing page {page_num}/{total_pages} - Found {len(listings)} listings")
             
             for listing in listings:
-                if should_exit:
-                    break
-                    
                 try:
                     # Find the detail page link
                     detail_link = listing.find('a', href=lambda x: x and 'act=5' in x)
@@ -480,15 +535,14 @@ def parse_properties(page, base_url, version_id):
                             property_data['url'] = detail_url
                             
                             # Save property to database
-                            save_property(property_data, version_id)
+                            save_property(property_data)
                             
                 except Exception as e:
                     print(f"Error processing listing: {str(e)}")
                     continue
             
             # Add a delay between pages
-            if not should_exit:
-                time.sleep(3)
+            #time.sleep(3)
     
     except Exception as e:
         print(f"Error parsing properties: {str(e)}")
@@ -497,47 +551,44 @@ def parse_properties(page, base_url, version_id):
 
 def main():
     base_url = "https://www.imot.bg/pcgi/imot.cgi?act=3&slink=bqn294"
+    browser = None
     
-    # Initialize database
-    print("Initializing database...")
-    init_database()
-    
-    with sync_playwright() as p:
-        # Launch browser
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        )
-        page = context.new_page()
+    try:
+        # Initialize database
+        print("Initializing database...")
+        init_database()
         
-        try:
+        with sync_playwright() as p:
+            # Launch browser
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            )
+            page = context.new_page()
+            
             # Navigate to the initial page
             print("Accessing the website...")
             page.goto(f"{base_url}&f1=1")
             
-            # Create new version for this crawl
-            version_id = create_new_version({})
-            if not version_id:
-                raise Exception("Failed to create new crawl version")
-            
-            print(f"Starting crawl version {version_id}")
-            
             # Parse properties and metadata
             print("Parsing property listings...")
-            metadata = parse_properties(page, base_url, version_id)
+            metadata = parse_properties(page, base_url)
             
-            if not should_exit:
-                # Update version with metadata and mark as complete
-                save_property({'id': 'metadata', 'data': metadata}, version_id)
-                complete_version(version_id)
-                print(f"Crawl version {version_id} completed successfully")
+            # Save metadata
+            save_property({'id': 'metadata', 'data': metadata})
+            print("Scraping completed successfully")
             
-        except Exception as e:
-            print(f"Error during scraping: {str(e)}")
-        
-        finally:
-            browser.close()
+    except KeyboardInterrupt:
+        print("\nScraping interrupted by user")
+    except Exception as e:
+        print(f"Error during scraping: {str(e)}")
+    finally:
+        if browser:
+            try:
+                browser.close()
+            except:
+                pass
 
 if __name__ == "__main__":
     main() 

@@ -1,0 +1,22 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment configuration
+.env
+*.ini
+
+# SQLite database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Alembic specific
+alembic.ini
+
+# IDE specific
+.idea/
+.vscode/
+*.swp
+*.swo 
