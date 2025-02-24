@@ -8,10 +8,130 @@ import requests
 import signal
 import sys
 from urllib.parse import urljoin
+import psycopg2
+from psycopg2.extras import Json
+from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Global flags for graceful shutdown
 should_exit = False
 is_shutting_down = False
+
+# Database configuration
+DB_URL = os.getenv('DATABASE_URL', "postgresql://postgres.mbqpxqpvjpimntzjthcc:[YOUR-PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres")
+
+def init_database():
+    """Initialize database tables if they don't exist"""
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+    
+    try:
+        # Create versions table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS crawl_versions (
+                id SERIAL PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                metadata JSONB,
+                total_properties INTEGER,
+                is_complete BOOLEAN DEFAULT FALSE
+            )
+        """)
+        
+        # Create properties table
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS properties (
+                id VARCHAR(50),
+                version_id INTEGER REFERENCES crawl_versions(id),
+                data JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id, version_id)
+            )
+        """)
+        
+        conn.commit()
+    except Exception as e:
+        print(f"Error initializing database: {str(e)}")
+        conn.rollback()
+    finally:
+        cur.close()
+        conn.close()
+
+def create_new_version(metadata):
+    """Create a new crawl version and return its ID"""
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+    
+    try:
+        cur.execute("""
+            INSERT INTO crawl_versions (metadata, total_properties, is_complete)
+            VALUES (%s, 0, FALSE)
+            RETURNING id
+        """, (Json(metadata),))
+        
+        version_id = cur.fetchone()[0]
+        conn.commit()
+        return version_id
+    except Exception as e:
+        print(f"Error creating new version: {str(e)}")
+        conn.rollback()
+        return None
+    finally:
+        cur.close()
+        conn.close()
+
+def save_property(property_data, version_id):
+    """Save a single property to the database"""
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+    
+    try:
+        cur.execute("""
+            INSERT INTO properties (id, version_id, data)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (id, version_id) DO UPDATE
+            SET data = EXCLUDED.data
+        """, (property_data['id'], version_id, Json(property_data)))
+        
+        # Update total properties count
+        cur.execute("""
+            UPDATE crawl_versions
+            SET total_properties = (
+                SELECT COUNT(*) FROM properties
+                WHERE version_id = %s
+            )
+            WHERE id = %s
+        """, (version_id, version_id))
+        
+        conn.commit()
+    except Exception as e:
+        print(f"Error saving property: {str(e)}")
+        conn.rollback()
+    finally:
+        cur.close()
+        conn.close()
+
+def complete_version(version_id):
+    """Mark a crawl version as complete"""
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+    
+    try:
+        cur.execute("""
+            UPDATE crawl_versions
+            SET is_complete = TRUE
+            WHERE id = %s
+        """, (version_id,))
+        
+        conn.commit()
+    except Exception as e:
+        print(f"Error completing version: {str(e)}")
+        conn.rollback()
+    finally:
+        cur.close()
+        conn.close()
 
 def signal_handler(signum, frame):
     global should_exit, is_shutting_down
@@ -131,10 +251,13 @@ def parse_detail_page(page, property_id):
         # Location
         location_elem = soup.find('h2')
         if location_elem:
-            property_data['location'] = {
-                'city': 'град София',  # This is fixed for the current search
-                'district': location_elem.get_text(strip=True).replace('град София, ', '')
-            }
+            district_text = location_elem.get_text(strip=True)
+            if 'град София' in district_text:
+                district = district_text.replace('град София,', '').strip()
+                property_data['location'] = {
+                    'city': 'град София',
+                    'district': district
+                }
         
         # Price information
         price_elem = soup.find(string=re.compile(r'\d+\s*EUR'))
@@ -149,9 +272,9 @@ def parse_detail_page(page, property_id):
                 }
         
         # Price per square meter
-        price_per_sqm = soup.find(string=re.compile(r'\d+\.\d+\s*EUR/m2'))
-        if price_per_sqm:
-            match = re.search(r'(\d+\.\d+)\s*EUR/m2', price_per_sqm)
+        price_per_sqm_elem = soup.find(string=re.compile(r'(\d+(?:\.\d+)?)\s*EUR/m2'))
+        if price_per_sqm_elem:
+            match = re.search(r'(\d+(?:\.\d+)?)\s*EUR/m2', price_per_sqm_elem)
             if match:
                 property_data['price_per_sqm'] = float(match.group(1))
         
@@ -159,11 +282,26 @@ def parse_detail_page(page, property_id):
         property_data['details'] = {}
         
         # Area
-        area_elem = soup.find(string=re.compile(r'Площ:\s*\d+\s*m2'))
+        area_elem = soup.find(string=re.compile(r'Площ:.*?(\d+)', re.DOTALL))
         if area_elem:
-            area_match = re.search(r'(\d+)\s*m2', area_elem)
+            area_match = re.search(r'Площ:.*?(\d+)', area_elem, re.DOTALL)
             if area_match:
                 property_data['details']['area'] = int(area_match.group(1))
+        
+        # Alternative area parsing from the price per sqm section
+        if 'area' not in property_data['details'] and property_data.get('price_per_sqm'):
+            price_elem = soup.find(string=lambda x: x and 'EUR/m2' in x)
+            if price_elem:
+                # Try to find area by dividing total price by price per sqm
+                try:
+                    price = property_data['price']['value']
+                    price_per_sqm = property_data['price_per_sqm']
+                    if price and price_per_sqm:
+                        area = round(price / price_per_sqm)
+                        property_data['details']['area'] = area
+                        property_data['details']['area_calculated'] = True
+                except Exception:
+                    pass
         
         # Floor
         floor_elem = soup.find(string=re.compile(r'Етаж:\s*\d+-ти от \d+'))
@@ -263,10 +401,28 @@ def get_total_pages(soup):
         print(f"Error getting total pages: {str(e)}")
     return 1
 
-def parse_properties(page, base_url):
-    properties = []
+def get_existing_properties(version_id):
+    """Get list of already processed property IDs for this version"""
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+    
+    try:
+        cur.execute("""
+            SELECT id FROM properties
+            WHERE version_id = %s
+        """, (version_id,))
+        
+        existing_ids = {row[0] for row in cur.fetchall()}
+        return existing_ids
+    except Exception as e:
+        print(f"Error getting existing properties: {str(e)}")
+        return set()
+    finally:
+        cur.close()
+        conn.close()
+
+def parse_properties(page, base_url, version_id):
     metadata = {}
-    processed_ids = set()  # Track processed IDs
     
     try:
         # Get the initial page content
@@ -314,11 +470,6 @@ def parse_properties(page, base_url):
                         detail_url = urljoin('https://www.imot.bg/', detail_link['href'])
                         property_id = re.search(r'adv=([^&]+)', detail_url).group(1)
                         
-                        # Skip if we've already processed this ID
-                        if property_id in processed_ids:
-                            print(f"Skipping duplicate property {property_id}")
-                            continue
-                        
                         # Navigate to detail page
                         print(f"Processing property {property_id}")
                         page.goto(detail_url)
@@ -327,11 +478,9 @@ def parse_properties(page, base_url):
                         if property_data:
                             property_data['id'] = property_id
                             property_data['url'] = detail_url
-                            properties.append(property_data)
-                            processed_ids.add(property_id)  # Add to processed IDs
                             
-                            # Save partial results after each property
-                            save_partial_results(properties, metadata)
+                            # Save property to database
+                            save_property(property_data, version_id)
                             
                 except Exception as e:
                     print(f"Error processing listing: {str(e)}")
@@ -343,14 +492,15 @@ def parse_properties(page, base_url):
     
     except Exception as e:
         print(f"Error parsing properties: {str(e)}")
-    finally:
-        # Save final results before returning
-        save_partial_results(properties, metadata)
     
-    return properties, metadata
+    return metadata
 
 def main():
     base_url = "https://www.imot.bg/pcgi/imot.cgi?act=3&slink=bqn294"
+    
+    # Initialize database
+    print("Initializing database...")
+    init_database()
     
     with sync_playwright() as p:
         # Launch browser
@@ -366,25 +516,22 @@ def main():
             print("Accessing the website...")
             page.goto(f"{base_url}&f1=1")
             
+            # Create new version for this crawl
+            version_id = create_new_version({})
+            if not version_id:
+                raise Exception("Failed to create new crawl version")
+            
+            print(f"Starting crawl version {version_id}")
+            
             # Parse properties and metadata
             print("Parsing property listings...")
-            properties, metadata = parse_properties(page, base_url)
+            metadata = parse_properties(page, base_url, version_id)
             
             if not should_exit:
-                # Prepare the final data structure
-                result = {
-                    'metadata': metadata,
-                    'properties': properties,
-                    'is_complete': True,
-                    'total_scraped': len(properties)
-                }
-                
-                # Save final results
-                print(f"Found {len(properties)} properties. Saving to JSON...")
-                with open('property_data.json', 'w', encoding='utf-8') as f:
-                    json.dump(result, f, ensure_ascii=False, indent=2)
-                
-                print("Scraping completed. Results saved to property_data.json")
+                # Update version with metadata and mark as complete
+                save_property({'id': 'metadata', 'data': metadata}, version_id)
+                complete_version(version_id)
+                print(f"Crawl version {version_id} completed successfully")
             
         except Exception as e:
             print(f"Error during scraping: {str(e)}")
