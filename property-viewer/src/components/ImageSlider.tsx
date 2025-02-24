@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import Image from 'next/image';
 import Slider from 'react-slick';
 import { Dialog } from '@headlessui/react';
 import 'slick-carousel/slick/slick.css';
@@ -14,7 +15,7 @@ export default function ImageSlider({ images }: ImageSliderProps) {
 
   if (!images || images.length === 0) {
     return (
-      <div className="h-64 bg-gray-200 flex items-center justify-center">
+      <div className="h-full bg-gray-200 flex items-center justify-center">
         <p className="text-gray-500">No images available</p>
       </div>
     );
@@ -27,22 +28,26 @@ export default function ImageSlider({ images }: ImageSliderProps) {
     slidesToShow: 1,
     slidesToScroll: 1,
     beforeChange: (_: any, next: number) => setCurrentImageIndex(next),
+    adaptiveHeight: true,
   };
 
   return (
     <>
-      <div className="relative h-64 overflow-hidden rounded-lg">
+      <div className="relative h-full">
         <Slider {...settings}>
           {images.map((image, index) => (
-            <div key={index} className="h-64">
-              <img
+            <div key={index} className="relative h-full aspect-[4/3]">
+              <Image
                 src={image}
                 alt={`Property image ${index + 1}`}
-                className="w-full h-full object-cover cursor-pointer"
+                fill
+                sizes="(max-width: 1024px) 100vw, 50vw"
+                className="object-contain cursor-pointer"
                 onClick={() => {
                   setCurrentImageIndex(index);
                   setIsOpen(true);
                 }}
+                priority={index === 0}
               />
             </div>
           ))}
@@ -54,24 +59,27 @@ export default function ImageSlider({ images }: ImageSliderProps) {
         onClose={() => setIsOpen(false)}
         className="relative z-50"
       >
-        <div className="fixed inset-0 bg-black/70" aria-hidden="true" />
+        <div className="fixed inset-0 bg-black/90" aria-hidden="true" />
 
         <div className="fixed inset-0 flex items-center justify-center p-4">
-          <Dialog.Panel className="w-full max-w-4xl bg-white rounded-lg">
+          <Dialog.Panel className="w-full max-w-5xl">
             <div className="relative">
               <button
                 onClick={() => setIsOpen(false)}
-                className="absolute right-4 top-4 z-10 text-white bg-black/50 rounded-full p-2"
+                className="absolute right-4 top-4 z-10 text-white bg-black/50 rounded-full p-2 hover:bg-black/70"
               >
                 ✕
               </button>
               <Slider {...settings} initialSlide={currentImageIndex}>
                 {images.map((image, index) => (
-                  <div key={index} className="h-[80vh]">
-                    <img
+                  <div key={index} className="relative h-[80vh]">
+                    <Image
                       src={image}
                       alt={`Property image ${index + 1}`}
-                      className="w-full h-full object-contain"
+                      fill
+                      sizes="100vw"
+                      className="object-contain"
+                      priority={index === currentImageIndex}
                     />
                   </div>
                 ))}

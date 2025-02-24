@@ -3,12 +3,14 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Property } from '@/types/property';
-import PropertyCard from '@/components/PropertyCard';
+import PropertyThumbnail from '@/components/PropertyThumbnail';
+import PropertyModal from '@/components/PropertyModal';
 
 export default function Home() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
   const [propertyTypes, setPropertyTypes] = useState<string[]>([]);
+  const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [filters, setFilters] = useState({
     minPrice: '',
     maxPrice: '',
@@ -18,11 +20,30 @@ export default function Home() {
     type: '',
     minYear: '',
     maxYear: '',
+    isPrivateSeller: null as boolean | null,
+  });
+
+  // Add stats state
+  const [stats, setStats] = useState({
+    totalProperties: 0,
+    privateSellers: 0,
+    brokerListings: 0,
   });
 
   useEffect(() => {
     fetchProperties();
   }, [filters]);
+
+  useEffect(() => {
+    // Calculate stats from properties
+    if (properties.length > 0) {
+      setStats({
+        totalProperties: properties.length,
+        privateSellers: properties.filter(p => p.is_private_seller).length,
+        brokerListings: properties.filter(p => !p.is_private_seller).length,
+      });
+    }
+  }, [properties]);
 
   useEffect(() => {
     // Extract unique property types from the data
@@ -79,6 +100,12 @@ export default function Home() {
         query = query.eq('type', filters.type);
       }
 
+      // Private seller filter
+      if (filters.isPrivateSeller !== null) {
+        console.log('Filtering by private seller:', filters.isPrivateSeller);
+        query = query.eq('is_private_seller', filters.isPrivateSeller);
+      }
+
       // District filter with improved text search
       if (filters.district && filters.district.trim()) {
         const district = filters.district.trim();
@@ -133,10 +160,10 @@ export default function Home() {
   }
 
   return (
-    <main className="container mx-auto px-4 py-8">
+    <div className="min-h-screen p-8">
       <h1 className="text-3xl font-bold mb-8">Property Viewer</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-8">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Price Range (EUR)
@@ -233,6 +260,50 @@ export default function Home() {
             onChange={(e) => setFilters({ ...filters, district: e.target.value })}
           />
         </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Seller Type
+          </label>
+          <select
+            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            value={filters.isPrivateSeller === null ? '' : filters.isPrivateSeller.toString()}
+            onChange={(e) => {
+              const value = e.target.value;
+              setFilters({ 
+                ...filters, 
+                isPrivateSeller: value === '' ? null : value === 'true'
+              });
+            }}
+          >
+            <option value="">All Sellers</option>
+            <option value="true">Private Sellers</option>
+            <option value="false">Brokers</option>
+          </select>
+        </div>
+
+        <div className="flex items-end">
+          <button
+            onClick={() => setFilters({
+              minPrice: '',
+              maxPrice: '',
+              minArea: '',
+              maxArea: '',
+              district: '',
+              type: '',
+              minYear: '',
+              maxYear: '',
+              isPrivateSeller: null,
+            })}
+            className="w-full py-2 px-4 text-sm text-gray-600 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+          >
+            Clear all filters
+          </button>
+        </div>
+      </div>
+
+      <div className="text-sm text-gray-600 mb-4">
+        Found {properties.length} properties
       </div>
 
       {loading ? (
@@ -244,12 +315,24 @@ export default function Home() {
           <p className="text-gray-500">No properties found matching your criteria.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {properties.map((property) => (
-            <PropertyCard key={property.id} property={property} />
+            <PropertyThumbnail
+              key={property.id}
+              property={property}
+              onClick={() => setSelectedProperty(property)}
+            />
           ))}
         </div>
       )}
-    </main>
+
+      {selectedProperty && (
+        <PropertyModal
+          property={selectedProperty}
+          isOpen={!!selectedProperty}
+          onClose={() => setSelectedProperty(null)}
+        />
+      )}
+    </div>
   );
 }

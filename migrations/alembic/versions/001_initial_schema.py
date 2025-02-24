@@ -41,6 +41,7 @@ def upgrade():
         sa.Column('last_modified', sa.String(), nullable=True),
         sa.Column('image_count', sa.Integer(), nullable=True),
         sa.Column('description', sa.Text(), nullable=True),
+        sa.Column('is_private_seller', sa.Boolean(), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')),
         sa.PrimaryKeyConstraint('id')
     )

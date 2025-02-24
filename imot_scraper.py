@@ -44,8 +44,9 @@ def save_property(property_data):
         cur.execute("""
             INSERT INTO properties (
                 id, type, url, price_value, price_currency, 
-                includes_vat, area_m2, views, last_modified, image_count, description
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                includes_vat, area_m2, views, last_modified, image_count, description,
+                is_private_seller
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO UPDATE SET
                 type = EXCLUDED.type,
                 url = EXCLUDED.url,
@@ -56,7 +57,8 @@ def save_property(property_data):
                 views = EXCLUDED.views,
                 last_modified = EXCLUDED.last_modified,
                 image_count = EXCLUDED.image_count,
-                description = EXCLUDED.description
+                description = EXCLUDED.description,
+                is_private_seller = EXCLUDED.is_private_seller
         """, (
             property_data.get('id'),
             property_data.get('type'),
@@ -68,7 +70,8 @@ def save_property(property_data):
             property_data.get('views'),
             property_data.get('last_modified'),
             property_data.get('image_count'),
-            property_data.get('description')
+            property_data.get('description'),
+            property_data.get('is_private_seller')
         ))
 
         # Insert into locations table
@@ -102,6 +105,8 @@ def save_property(property_data):
         # Insert into construction_info table
         if property_data.get('details', {}).get('construction') or property_data.get('details', {}).get('central_heating') is not None:
             construction = property_data.get('details', {}).get('construction', {})
+            central_heating = property_data.get('details', {}).get('central_heating')
+            print(f"Saving construction info with central_heating: {central_heating}")
             cur.execute("""
                 INSERT INTO construction_info (
                     property_id, type, year, has_central_heating
@@ -114,8 +119,9 @@ def save_property(property_data):
                 property_data['id'],
                 construction.get('type'),
                 construction.get('year'),
-                property_data.get('details', {}).get('central_heating')
+                central_heating
             ))
+            print(f"Construction info saved successfully for property {property_data['id']}")
 
         # Insert into contact_info table
         if property_data.get('contact'):
@@ -356,20 +362,15 @@ def parse_detail_page(page, property_id):
                 }
         
         # Construction type and year
-        print(f"\nDebug: Searching for construction info in property {property_id}")
-        
-        # Find the construction info by looking for the label and getting its parent's text
         construction_label = soup.find(string=lambda text: text and text.strip() == 'Строителство:')
         if construction_label and construction_label.parent:
             construction_text = construction_label.parent.get_text().strip()
-            print(f"Debug: Found construction text: '{construction_text}'")
             
             # Parse using the format "Строителство: TYPE, YEAR г."
             type_match = re.search(r'Строителство:\s*(.*?),\s*(\d{4})\s*г\.?', construction_text)
             if type_match:
                 construction_type = type_match.group(1).strip()
                 construction_year = int(type_match.group(2))
-                print(f"Debug: Parsed construction - Type: {construction_type}, Year: {construction_year}")
                 
                 property_data['details']['construction'] = {
                     'type': construction_type,
@@ -381,22 +382,19 @@ def parse_detail_page(page, property_id):
                 if type_match:
                     construction_type = type_match.group(1).strip() if type_match.group(1) else None
                     construction_year = int(type_match.group(2)) if type_match.group(2) else None
-                    print(f"Debug: Parsed construction (alt format) - Type: {construction_type}, Year: {construction_year}")
                     
                     if construction_type or construction_year:
                         property_data['details']['construction'] = {
                             'type': construction_type,
                             'year': construction_year
                         }
-                else:
-                    print(f"Debug: Could not parse construction info from: '{construction_text}'")
-        else:
-            print(f"Debug: No construction info found for property {property_id}")
         
         # Heating
         heating_elem = soup.find(string=re.compile(r'ТЕЦ:'))
         if heating_elem:
-            property_data['details']['central_heating'] = 'ДА' in heating_elem
+            has_central_heating = 'ДА' in heating_elem
+            property_data['details']['central_heating'] = has_central_heating
+            print(f"Found heating element: '{heating_elem}', setting central_heating to: {has_central_heating}")
         
         # Description
         try:
@@ -417,17 +415,50 @@ def parse_detail_page(page, property_id):
         if description_elem:
             property_data['description'] = description_elem.get_text(strip=True)
         
-        # Features
+        # Features and Private Seller Status
+        features = []
+        is_private_seller = False
+        
+        # Check description for private seller indication
+        if property_data.get('description'):
+            if any(phrase in property_data['description'].lower() for phrase in [
+                'частно лице',
+                'продава се от физическо лице',
+                'собственик продава',
+                'директно от собственик'
+            ]):
+                is_private_seller = True
+                features.append('Частно лице')
+
+        # Check features section
         features_elem = soup.find('div', string=re.compile(r'Особености:'))
         if features_elem:
-            features = [f.strip() for f in features_elem.parent.get_text().replace('Особености:', '').split(',')]
-            property_data['features'] = features
+            feature_text = features_elem.parent.get_text().replace('Особености:', '')
+            extracted_features = [f.strip() for f in feature_text.split(',')]
+            
+            # Add unique features
+            for feature in extracted_features:
+                if feature and feature not in features:
+                    features.append(feature)
+                    # Check if any feature indicates private seller
+                    if any(phrase in feature.lower() for phrase in ['частно лице', 'собственик']):
+                        is_private_seller = True
+                        if 'Частно лице' not in features:
+                            features.append('Частно лице')
+
+        property_data['features'] = features
+        property_data['is_private_seller'] = is_private_seller
         
         # Contact information
         contact_info = {}
         broker_elem = soup.find(string=re.compile(r'Брокер:'))
         if broker_elem:
             contact_info['broker_name'] = broker_elem.parent.get_text().replace('Брокер:', '').strip()
+            # If no broker name or contains private seller indicators, mark as private seller
+            if not contact_info['broker_name'] or any(phrase in contact_info['broker_name'].lower() for phrase in ['собственик', 'частно лице']):
+                is_private_seller = True
+                if 'Частно лице' not in features:
+                    features.append('Частно лице')
         
         phone_elem = soup.find(string=re.compile(r'Телефон:'))
         if phone_elem:

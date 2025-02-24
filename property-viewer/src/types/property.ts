@@ -10,6 +10,7 @@ export interface Property {
   last_modified: string | null;
   image_count: number | null;
   description: string | null;
+  is_private_seller: boolean | null;
   created_at: string;
   location?: {
     city: string | null;
