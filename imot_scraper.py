@@ -58,17 +58,23 @@ def save_property(property_data):
             conn.commit()
             return
 
-        # Regular property insert
+        # First check if property exists and get its current URL
+        cur.execute("""
+            SELECT url FROM properties WHERE id = %s
+        """, (property_data['id'],))
+        existing_url = cur.fetchone()
+
+        # Regular property insert/update
         cur.execute("""
             INSERT INTO properties (
                 id, type, url, price_value, price_currency, includes_vat,
                 area_m2, views, last_modified, image_count, description,
-                is_private_seller, created_at
+                is_private_seller, created_at, updated_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             ) ON CONFLICT (id) DO UPDATE SET
                 type = EXCLUDED.type,
-                url = EXCLUDED.url,
+                url = COALESCE(EXCLUDED.url, properties.url),
                 price_value = EXCLUDED.price_value,
                 price_currency = EXCLUDED.price_currency,
                 includes_vat = EXCLUDED.includes_vat,
@@ -77,14 +83,16 @@ def save_property(property_data):
                 last_modified = EXCLUDED.last_modified,
                 image_count = EXCLUDED.image_count,
                 description = EXCLUDED.description,
-                is_private_seller = EXCLUDED.is_private_seller
+                is_private_seller = EXCLUDED.is_private_seller,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING url
         """, (
             property_data['id'],
             property_data.get('type'),
             property_data.get('url'),
-            property_data.get('price_value'),
-            property_data.get('price_currency'),
-            property_data.get('includes_vat'),
+            property_data.get('price', {}).get('value'),
+            property_data.get('price', {}).get('currency'),
+            property_data.get('price', {}).get('includes_vat'),
             property_data.get('area_m2'),
             property_data.get('views'),
             property_data.get('last_modified'),
@@ -92,6 +100,22 @@ def save_property(property_data):
             property_data.get('description'),
             property_data.get('is_private_seller')
         ))
+        
+        updated_url = cur.fetchone()[0]
+        
+        # If URL has changed, log it in a separate table for tracking
+        if existing_url and existing_url[0] != updated_url:
+            cur.execute("""
+                INSERT INTO url_history (
+                    property_id, old_url, new_url, changed_at
+                ) VALUES (
+                    %s, %s, %s, CURRENT_TIMESTAMP
+                )
+            """, (
+                property_data['id'],
+                existing_url[0],
+                updated_url
+            ))
 
         # Insert into locations table
         if property_data.get('location'):
@@ -335,30 +359,32 @@ def parse_detail_page(page, property_id):
         property_data['type'] = soup.find('h1').get_text(strip=True) if soup.find('h1') else None
         
         # Location
-        location_elem = soup.find('h2')
+        location_elem = soup.find('div', class_='location')
         if location_elem:
-            district_text = location_elem.get_text(strip=True)
-            if 'град София' in district_text:
-                district = district_text.replace('град София,', '').strip()
+            location_text = location_elem.get_text(strip=True)
+            if 'град София' in location_text:
+                # Extract district - it's between "град София," and the first comma after that
+                sofia_idx = location_text.index('град София,')
+                remaining_text = location_text[sofia_idx + len('град София,'):].strip()
+                district = remaining_text.split(',')[0].strip()
                 property_data['location'] = {
                     'city': 'град София',
                     'district': district
                 }
         
-        # Price information
-        price_elem = soup.find(string=re.compile(r'\d+\s*EUR'))
+        # Price information - using proper price selector
+        price_elem = soup.find('div', id='cena')
         if price_elem:
-            price_match = re.search(r'(\d+(?:[\s,]\d+)*)\s*EUR', price_elem)
+            price_text = price_elem.get_text(strip=True)
+            price_match = re.search(r'(\d+(?:[\s,]\d+)*)\s*EUR', price_text)
             if price_match:
                 price = price_match.group(1).replace(' ', '')
                 
                 # Check for VAT inclusion
-                includes_vat = False
-                cenakv_elem = soup.find('span', id='cenakv')
-                if cenakv_elem and cenakv_elem.find_next_sibling():
-                    next_div = cenakv_elem.find_next_sibling()
-                    if next_div and "Цената е с включено ДДС" in next_div.get_text():
-                        includes_vat = True
+                price_container = soup.find('div', class_='price')
+                if price_container:
+                    vat_text = price_container.find(string=lambda x: x and ('ДДС' in x if x else False))
+                    includes_vat = vat_text and 'без ДДС' not in vat_text.lower()
                 
                 property_data['price'] = {
                     'value': int(price),
@@ -366,10 +392,10 @@ def parse_detail_page(page, property_id):
                     'includes_vat': includes_vat
                 }
         
-        # Price per square meter
-        price_per_sqm_elem = soup.find(string=re.compile(r'(\d+(?:\.\d+)?)\s*EUR/m2'))
+        # Price per square meter - using proper selector
+        price_per_sqm_elem = soup.find('span', id='cenakv')
         if price_per_sqm_elem:
-            match = re.search(r'(\d+(?:\.\d+)?)\s*EUR/m2', price_per_sqm_elem)
+            match = re.search(r'(\d+(?:\.\d+)?)\s*EUR/m', price_per_sqm_elem.get_text())
             if match:
                 property_data['price_per_sqm'] = float(match.group(1))
         
