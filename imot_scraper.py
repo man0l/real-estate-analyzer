@@ -44,14 +44,17 @@ def save_property(property_data):
         # Start transaction
         cur.execute("BEGIN")
         
-        # Insert into properties table
+        # Handle metadata separately
         if property_data.get('id') == 'metadata':
+            # Insert or update metadata
             cur.execute("""
-                INSERT INTO properties (id, data)
-                VALUES (%s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    data = EXCLUDED.data
-            """, (property_data['id'], Json(property_data['data'])))
+                INSERT INTO metadata (key, value, updated_at)
+                VALUES ('search_results', %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (key) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (Json(property_data['data']),))
+            
             conn.commit()
             return
 
@@ -199,29 +202,44 @@ def save_property(property_data):
                     ON CONFLICT (property_id, feature) DO NOTHING
                 """, (property_data['id'], feature))
 
-        # Insert into images table
+        # Handle images
         if property_data.get('images'):
-            # First delete existing images
+            # Get existing images with their storage URLs
             cur.execute("""
-                DELETE FROM images
+                SELECT url, storage_url, position
+                FROM images
                 WHERE property_id = %s
             """, (property_data['id'],))
+            existing_images = {row[0]: {'storage_url': row[1], 'position': row[2]} 
+                             for row in cur.fetchall()}
             
-            # Process and insert new images
+            # Process and insert/update images
             for idx, image_url in enumerate(property_data['images']):
                 try:
-                    # Upload image to Supabase Storage
-                    storage_url = process_property_image(property_data['id'], image_url)
+                    # If image exists and has a storage URL, reuse it
+                    if image_url in existing_images and existing_images[image_url]['storage_url']:
+                        storage_url = existing_images[image_url]['storage_url']
+                        # Update only if position changed
+                        if existing_images[image_url]['position'] != idx:
+                            cur.execute("""
+                                UPDATE images
+                                SET position = %s
+                                WHERE property_id = %s AND url = %s
+                            """, (idx, property_data['id'], image_url))
+                    else:
+                        # Process new image
+                        storage_url = process_property_image(property_data['id'], image_url)
+                        
+                        # Insert new image record
+                        cur.execute("""
+                            INSERT INTO images (property_id, url, storage_url, position)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (property_id, url) DO UPDATE SET
+                                storage_url = EXCLUDED.storage_url,
+                                position = EXCLUDED.position
+                        """, (property_data['id'], image_url, storage_url, idx))
                     
-                    # Insert image record with both URLs
-                    cur.execute("""
-                        INSERT INTO images (property_id, url, storage_url, position)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (property_id, url) DO UPDATE SET
-                            storage_url = EXCLUDED.storage_url,
-                            position = EXCLUDED.position
-                    """, (property_data['id'], image_url, storage_url, idx))
-                    conn.commit()  # Commit each image insert separately
+                    conn.commit()  # Commit each image operation separately
                 except Exception as e:
                     print(f"Error processing image {image_url}: {str(e)}")
                     conn.rollback()  # Rollback only the failed image
@@ -635,8 +653,39 @@ def main():
             print("Parsing property listings...")
             metadata = parse_properties(page, base_url)
             
-            # Save metadata
-            save_property({'id': 'metadata', 'data': metadata})
+            # Save different types of metadata separately
+            if metadata:
+                # Save search results metadata
+                save_property({
+                    'id': 'metadata',
+                    'data': {
+                        'total_listings': metadata.get('total_listings'),
+                        'search_criteria': metadata.get('search_criteria', {}),
+                        'last_updated': datetime.now().isoformat()
+                    }
+                })
+                
+                # Save price statistics metadata
+                if 'avg_price_per_sqm' in metadata:
+                    conn = psycopg2.connect(DB_URL)
+                    cur = conn.cursor()
+                    try:
+                        cur.execute("""
+                            INSERT INTO metadata (key, value, updated_at)
+                            VALUES ('price_stats', %s, CURRENT_TIMESTAMP)
+                            ON CONFLICT (key) DO UPDATE SET
+                                value = EXCLUDED.value,
+                                updated_at = CURRENT_TIMESTAMP
+                        """, (Json({
+                            'avg_price_per_sqm': metadata['avg_price_per_sqm'],
+                            'currency': 'EUR',
+                            'last_updated': datetime.now().isoformat()
+                        }),))
+                        conn.commit()
+                    finally:
+                        cur.close()
+                        conn.close()
+            
             print("Scraping completed successfully")
             
     except KeyboardInterrupt:

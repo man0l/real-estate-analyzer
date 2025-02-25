@@ -13,9 +13,37 @@ load_dotenv()
 # Configuration
 DB_URL = os.getenv('DATABASE_URL')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+OPENAI_BASE_URL = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')  # Default to OpenAI
+OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')  # Default model
+
+# Provider-specific configurations
+PROVIDER = os.getenv('AI_PROVIDER', 'openai').lower()  # Can be 'openai', 'ollama', or others
+
+# Provider-specific model mappings
+MODEL_MAPPINGS = {
+    'ollama': 'todorov/bggpt:2B-IT-v1.0.Q4_K_M',  # Default Ollama model
+    'openai': 'gpt-4o-mini',  # Default OpenAI model
+}
+
+# Initialize OpenAI client with appropriate configuration
+def get_ai_client():
+    client_kwargs = {
+        'api_key': OPENAI_API_KEY,
+    }
+    
+    if PROVIDER != 'openai':
+        client_kwargs['base_url'] = OPENAI_BASE_URL
+    
+    return OpenAI(**client_kwargs)
 
 # Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = get_ai_client()
+
+def get_model_for_provider():
+    """Get the appropriate model name based on the provider"""
+    if OPENAI_MODEL:  # If explicitly set in env, use that
+        return OPENAI_MODEL
+    return MODEL_MAPPINGS.get(PROVIDER, MODEL_MAPPINGS['openai'])
 
 def analyze_building_status(description: str) -> Tuple[bool, Optional[datetime], str]:
     """
@@ -24,36 +52,40 @@ def analyze_building_status(description: str) -> Tuple[bool, Optional[datetime],
     """
     try:
         response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+            model=get_model_for_provider(),
             messages=[
                 {
                     "role": "user",
-                    "content": """Analyze this property description and determine the building's completion status based on mentions of Act 14, 15, or 16.
+                    "content": """
+                            Ти си екперт в анализите на обяви за недвижими имоти. Следният текст е от обява за апартамент в София.
 
-Rules:
-1. Act 14 means rough construction is complete
-2. Act 15 means building systems are complete
-3. Act 16 is the final completion certificate
-4. Future dates indicate planned completion
-5. "пред акт 16" means approaching Act 16
-6. Look for payment schemes mentioning these acts
-7. Extract any mentioned completion dates (for Act 16)
+                            Описание: """ + description + """
 
-Respond in this exact format:
-HAS_ACT16: true/false
-PLAN_DATE: [YYYY-MM-DD or none if not found]
-STATUS: [one of: completed/in_progress/planned]
-DETAILS: [brief explanation]
+                            Анализирай описанието на този имот и разбнери дали сградата е на в строеж или е въведена в експлоатация. Това става като се споменава акт 14, акт 15 и акт 16.
 
-Here's the description to analyze:
-"""
-                    + description
+                            Rules:
+                            1. Бъдещи дати означава, че се планира завършване на сградата, например "ще бъде завършена през март 2025", "очкава се акт 16 през март". Това значи, че сградата не е въведена в експлоатация и няма получен акт 16.
+                            2. "пред акт 16" означава, че се очаква акт 16 скоро. Това значи, че има акт 15 и няма акт 16. Същото важи и за "С акт 15".
+                            3. разрешение за ползване означава, че има разрешение за ползване на сградата и сградата има акт 16 и е въведена в експлоатация.                           
+                            4. Извлечи всички споменати дати за Акт 16 ако има такива и има акт 14 или акт 15.
+                            5. фаза Акт 14 оазначава, че има получен акт 14 и няма акт 16.
+                           
+                            Задължително отговаряй с този формат без да коментираш излишно и не добявай излишни полета и символи:
+                            HAS_ACT16: true/false
+                            PLAN_DATE: [YYYY-MM-DD or none if not found]
+                            STATUS: [едно от: completed/in_progress/planned]
+                            DETAILS: [кратко описание]
+
+                            Не може да има акт 14 и акт 16 или акт 14 и акт 15, те са един след друг. Ако в текста е споменато, че има акт 14 и се очаква акт 16, тогава има акт 14 и няма акт 16.
+
+                            Използвай днешната дата за да сравняваш бъдещите дати ако са споменати: """ + datetime.today().strftime('%Y-%m-%d')
                 }
             ],
             max_tokens=150
         )
 
         # Parse the response
+        print(response.choices[0].message.content)
         result = response.choices[0].message.content
         lines = result.strip().split('\n')
         
