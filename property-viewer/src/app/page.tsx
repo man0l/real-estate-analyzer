@@ -283,69 +283,107 @@ export default function Home() {
     try {
       // Calculate stats from current properties
       const validProperties = properties.filter(p => {
+        // Convert price to number if it's a string
         const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
-        return price && price > 0 && !isNaN(price);
+        
+        // Check if district looks like a year (e.g., "2024 г.")
+        const districtLooksLikeYear = p.location?.district?.match(/^20\d{2}/);
+        
+        const hasValidPrice = price && price > 0 && !isNaN(price) && !districtLooksLikeYear;
+        
+        if (!hasValidPrice) {
+          console.log('Property excluded from market stats due to invalid price or year-like district:', {
+            id: p.id,
+            originalPrice: p.price_value,
+            convertedPrice: price,
+            district: p.location?.district,
+            priceType: typeof p.price_value,
+            isPrivateSeller: p.is_private_seller,
+            excludedReason: districtLooksLikeYear ? 'district looks like year' : 'invalid price'
+          });
+        }
+
+        // Store the converted price
+        if (hasValidPrice) {
+          p.price_value = price;
+        }
+        return hasValidPrice;
       });
 
-      const validPropertiesWithArea = validProperties.filter(p => {
-        const area = p.area_m2;
-        return area != null && area > 0;
-      });
+      // Debug: Log properties sorted by price
+      console.log('Valid properties for market stats sorted by price:', 
+        validProperties
+          .sort((a, b) => (b.price_value || 0) - (a.price_value || 0))
+          .map(p => ({
+            id: p.id,
+            price: p.price_value,
+            priceType: typeof p.price_value,
+            area: p.area_m2,
+            district: p.location?.district,
+            isPrivateSeller: p.is_private_seller,
+            hasAct16: p.construction_info?.has_act16,
+            isRenovated: p.construction_info?.is_renovated
+          }))
+      );
+
+      const validPropertiesWithArea = validProperties.filter(p => p.area_m2 && p.area_m2 > 0 && !isNaN(p.area_m2));
       const propertiesWithAct16 = validProperties.filter(p => p.construction_info?.has_act16 === true);
       const propertiesWithoutAct16 = validProperties.filter(p => p.construction_info?.has_act16 === false);
       const renovatedProperties = validProperties.filter(p => p.construction_info?.is_renovated === true);
 
-      // Calculate averages
+      // Debug: Log counts and sums
+      console.log('Market Stats - Property counts and sums:', {
+        total: properties.length,
+        valid: validProperties.length,
+        withArea: validPropertiesWithArea.length,
+        withAct16: propertiesWithAct16.length,
+        withoutAct16: propertiesWithoutAct16.length,
+        renovated: {
+          count: renovatedProperties.length,
+          prices: renovatedProperties.map(p => p.price_value),
+          sum: renovatedProperties.reduce((sum, p) => sum + p.price_value, 0)
+        }
+      });
+
       const avgPrice = validProperties.length > 0
-        ? validProperties.reduce((sum, p) => {
-            const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
-            return sum + price;
-          }, 0) / validProperties.length
+        ? Math.round(validProperties.reduce((sum, p) => sum + p.price_value, 0) / validProperties.length)
         : 0;
 
       const avgPricePerM2 = validPropertiesWithArea.length > 0
-        ? validPropertiesWithArea.reduce((sum, p) => {
-            const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
-            const area = p.area_m2 || 1; // This is safe because we filtered for valid areas above
-            return sum + (price / area);
-          }, 0) / validPropertiesWithArea.length
+        ? Math.round(validPropertiesWithArea.reduce((sum, p) => {
+            // Since we filtered for valid areas above, we can safely use || 1 here
+            const area = p.area_m2 || 1;
+            return sum + (p.price_value / area);
+          }, 0) / validPropertiesWithArea.length)
         : 0;
 
       const avgPriceWithAct16 = propertiesWithAct16.length > 0
-        ? propertiesWithAct16.reduce((sum, p) => {
-            const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
-            return sum + price;
-          }, 0) / propertiesWithAct16.length
+        ? Math.round(propertiesWithAct16.reduce((sum, p) => sum + p.price_value, 0) / propertiesWithAct16.length)
         : 0;
 
       const avgPriceWithoutAct16 = propertiesWithoutAct16.length > 0
-        ? propertiesWithoutAct16.reduce((sum, p) => {
-            const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
-            return sum + price;
-          }, 0) / propertiesWithoutAct16.length
+        ? Math.round(propertiesWithoutAct16.reduce((sum, p) => sum + p.price_value, 0) / propertiesWithoutAct16.length)
         : 0;
 
       const avgPriceRenovated = renovatedProperties.length > 0
-        ? renovatedProperties.reduce((sum, p) => {
-            const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
-            return sum + price;
-          }, 0) / renovatedProperties.length
+        ? Math.round(renovatedProperties.reduce((sum, p) => sum + p.price_value, 0) / renovatedProperties.length)
         : 0;
 
-      // Debug logging
-      console.log('Market Stats Calculation:', {
-        totalProperties: properties.length,
-        validProperties: validProperties.length,
-        validWithArea: validPropertiesWithArea.length,
-        withAct16: propertiesWithAct16.length,
-        withoutAct16: propertiesWithoutAct16.length,
-        renovated: renovatedProperties.length,
-        averages: {
-          overall: avgPrice,
-          perM2: avgPricePerM2,
-          withAct16: avgPriceWithAct16,
-          withoutAct16: avgPriceWithoutAct16,
-          renovated: avgPriceRenovated
+      // Debug: Log all averages with their calculations
+      console.log('Market Stats - Price averages calculations:', {
+        overall: {
+          sum: validProperties.reduce((sum, p) => sum + p.price_value, 0),
+          count: validProperties.length,
+          average: avgPrice
+        },
+        renovated: {
+          sum: renovatedProperties.reduce((sum, p) => sum + p.price_value, 0),
+          count: renovatedProperties.length,
+          average: avgPriceRenovated,
+          prices: renovatedProperties.map(p => ({
+            id: p.id,
+            price: p.price_value
+          }))
         }
       });
 
