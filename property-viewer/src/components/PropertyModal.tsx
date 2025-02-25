@@ -55,6 +55,16 @@ export default function PropertyModal({ property, isOpen, onClose }: PropertyMod
             <div>
               <h2 className="text-xl font-bold text-gray-900">{property.type}</h2>
               <p className="text-gray-600">{property.location?.district}</p>
+              {property.url && (
+                <a 
+                  href={property.url} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="text-sm text-blue-600 hover:text-blue-800 hover:underline mt-1 inline-block"
+                >
+                  View Original Listing
+                </a>
+              )}
             </div>
             <div className="flex items-center gap-4">
               <div className="text-right">
@@ -90,6 +100,14 @@ export default function PropertyModal({ property, isOpen, onClose }: PropertyMod
                     <p className="text-sm text-gray-600">Area</p>
                     <p className="font-semibold">{property.area_m2} m²</p>
                   </div>
+                  {property.price_value && property.area_m2 && (
+                    <div className="px-4 py-2 bg-gray-50 rounded-lg">
+                      <p className="text-sm text-gray-600">Price per m²</p>
+                      <p className="font-semibold">
+                        {Math.round(property.price_value / property.area_m2).toLocaleString()} {property.price_currency}/m²
+                      </p>
+                    </div>
+                  )}
                   {property.floor_info && (
                     <div className="px-4 py-2 bg-gray-50 rounded-lg">
                       <p className="text-sm text-gray-600">Floor</p>

@@ -52,6 +52,11 @@ export default function PropertyThumbnail({ property, onClick }: PropertyThumbna
         )}
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-4">
           <p className="text-white font-semibold">{formattedPrice}</p>
+          {property.price_value && property.area_m2 && (
+            <p className="text-white text-sm opacity-90">
+              {Math.round(property.price_value / property.area_m2).toLocaleString()} {property.price_currency}/m²
+            </p>
+          )}
         </div>
       </div>
       

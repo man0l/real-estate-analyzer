@@ -50,6 +50,17 @@ export default function PropertyCard({ property }: PropertyCardProps) {
             <p className="text-gray-600">
               {property.area_m2} m² • {property.floor_info?.current_floor}/{property.floor_info?.total_floors} floor
             </p>
+            URL HERE
+            {property.url && (
+              <a 
+                href={property.url} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="text-sm text-blue-600 hover:text-blue-800 hover:underline mt-1 inline-block"
+              >
+                View Original Listing
+              </a>
+            )}
           </div>
           <div className="text-right">
             <p className="text-xl font-bold">{formattedPrice} {property.price_currency}</p>
