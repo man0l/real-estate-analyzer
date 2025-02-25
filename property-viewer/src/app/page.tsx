@@ -51,6 +51,11 @@ export default function Home() {
     fetchProperties();
   }, [filters]);
 
+  // Add effect to update market stats when properties change
+  useEffect(() => {
+    fetchMarketStats();
+  }, [properties]);
+
   // Fetch filter options from database
   async function fetchFilterOptions() {
     try {
@@ -277,34 +282,75 @@ export default function Home() {
   async function fetchMarketStats() {
     try {
       // Calculate stats from current properties
-      const validProperties = properties.filter(p => p.price_value && p.price_value > 0);
-      const validPropertiesWithArea = properties.filter(p => p.price_value && p.price_value > 0 && p.area_m2 && p.area_m2 > 0);
-      const propertiesWithAct16 = properties.filter(p => p.construction_info?.has_act16 === true && p.price_value && p.price_value > 0);
-      const propertiesWithoutAct16 = properties.filter(p => p.construction_info?.has_act16 === false && p.price_value && p.price_value > 0);
-      const renovatedProperties = properties.filter(p => p.construction_info?.is_renovated === true && p.price_value && p.price_value > 0);
+      const validProperties = properties.filter(p => {
+        const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
+        return price && price > 0 && !isNaN(price);
+      });
 
+      const validPropertiesWithArea = validProperties.filter(p => {
+        const area = p.area_m2;
+        return area != null && area > 0;
+      });
+      const propertiesWithAct16 = validProperties.filter(p => p.construction_info?.has_act16 === true);
+      const propertiesWithoutAct16 = validProperties.filter(p => p.construction_info?.has_act16 === false);
+      const renovatedProperties = validProperties.filter(p => p.construction_info?.is_renovated === true);
+
+      // Calculate averages
       const avgPrice = validProperties.length > 0
-        ? validProperties.reduce((sum, p) => sum + (p.price_value || 0), 0) / validProperties.length
+        ? validProperties.reduce((sum, p) => {
+            const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
+            return sum + price;
+          }, 0) / validProperties.length
         : 0;
 
       const avgPricePerM2 = validPropertiesWithArea.length > 0
-        ? validPropertiesWithArea.reduce((sum, p) => sum + ((p.price_value || 0) / (p.area_m2 || 1)), 0) / validPropertiesWithArea.length
+        ? validPropertiesWithArea.reduce((sum, p) => {
+            const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
+            const area = p.area_m2 || 1; // This is safe because we filtered for valid areas above
+            return sum + (price / area);
+          }, 0) / validPropertiesWithArea.length
         : 0;
 
       const avgPriceWithAct16 = propertiesWithAct16.length > 0
-        ? propertiesWithAct16.reduce((sum, p) => sum + (p.price_value || 0), 0) / propertiesWithAct16.length
+        ? propertiesWithAct16.reduce((sum, p) => {
+            const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
+            return sum + price;
+          }, 0) / propertiesWithAct16.length
         : 0;
 
       const avgPriceWithoutAct16 = propertiesWithoutAct16.length > 0
-        ? propertiesWithoutAct16.reduce((sum, p) => sum + (p.price_value || 0), 0) / propertiesWithoutAct16.length
+        ? propertiesWithoutAct16.reduce((sum, p) => {
+            const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
+            return sum + price;
+          }, 0) / propertiesWithoutAct16.length
         : 0;
 
       const avgPriceRenovated = renovatedProperties.length > 0
-        ? renovatedProperties.reduce((sum, p) => sum + (p.price_value || 0), 0) / renovatedProperties.length
+        ? renovatedProperties.reduce((sum, p) => {
+            const price = typeof p.price_value === 'string' ? parseFloat(p.price_value) : p.price_value;
+            return sum + price;
+          }, 0) / renovatedProperties.length
         : 0;
 
-      setMarketStats({
+      // Debug logging
+      console.log('Market Stats Calculation:', {
         totalProperties: properties.length,
+        validProperties: validProperties.length,
+        validWithArea: validPropertiesWithArea.length,
+        withAct16: propertiesWithAct16.length,
+        withoutAct16: propertiesWithoutAct16.length,
+        renovated: renovatedProperties.length,
+        averages: {
+          overall: avgPrice,
+          perM2: avgPricePerM2,
+          withAct16: avgPriceWithAct16,
+          withoutAct16: avgPriceWithoutAct16,
+          renovated: avgPriceRenovated
+        }
+      });
+
+      setMarketStats({
+        totalProperties: validProperties.length,
         avgPrice,
         avgPricePerM2,
         avgPriceWithAct16,
@@ -333,11 +379,11 @@ export default function Home() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="text-sm text-gray-600">Average Price (All Properties)</div>
-            <div className="text-2xl font-bold">{marketStats.avgPrice.toLocaleString()} €</div>
+            <div className="text-2xl font-bold">{Math.round(marketStats.avgPrice).toLocaleString()} €</div>
           </div>
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="text-sm text-gray-600">Average Price per m² (All Properties)</div>
-            <div className="text-2xl font-bold">{marketStats.avgPricePerM2.toLocaleString()} € / m²</div>
+            <div className="text-2xl font-bold">{Math.round(marketStats.avgPricePerM2).toLocaleString()} € / m²</div>
           </div>
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="text-sm text-gray-600">Total Properties</div>
@@ -345,15 +391,15 @@ export default function Home() {
           </div>
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="text-sm text-gray-600">Average Price with Act 16</div>
-            <div className="text-2xl font-bold">{marketStats.avgPriceWithAct16.toLocaleString()} €</div>
+            <div className="text-2xl font-bold">{Math.round(marketStats.avgPriceWithAct16).toLocaleString()} €</div>
           </div>
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="text-sm text-gray-600">Average Price without Act 16</div>
-            <div className="text-2xl font-bold">{marketStats.avgPriceWithoutAct16.toLocaleString()} €</div>
+            <div className="text-2xl font-bold">{Math.round(marketStats.avgPriceWithoutAct16).toLocaleString()} €</div>
           </div>
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="text-sm text-gray-600">Average Price for Renovated Properties</div>
-            <div className="text-2xl font-bold">{marketStats.avgPriceRenovated.toLocaleString()} €</div>
+            <div className="text-2xl font-bold">{Math.round(marketStats.avgPriceRenovated).toLocaleString()} €</div>
           </div>
         </div>
 
