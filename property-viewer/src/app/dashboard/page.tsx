@@ -1,16 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Property } from '@/types/property';
 import Dashboard from '@/components/Dashboard';
 import DashboardFilters from '@/components/DashboardFilters';
-import Link from 'next/link';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 
 export default function DashboardPage() {
   const router = useRouter();
-  const pathname = usePathname();
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
   const [districts, setDistricts] = useState<string[]>([]);
@@ -26,32 +24,7 @@ export default function DashboardPage() {
     propertyType: [] as string[],
   });
 
-  useEffect(() => {
-    fetchDistricts();
-    fetchProperties();
-  }, []);
-
-  async function fetchDistricts() {
-    try {
-      const { data, error } = await supabase
-        .from('locations')
-        .select('district')
-        .not('district', 'is', null)
-        .order('district');
-
-      if (error) {
-        console.error('Error fetching districts:', error);
-        return;
-      }
-
-      const uniqueDistricts = [...new Set(data.map(d => d.district))];
-      setDistricts(uniqueDistricts);
-    } catch (error) {
-      console.error('Error fetching districts:', error);
-    }
-  }
-
-  async function fetchProperties() {
+  const fetchProperties = useCallback(async () => {
     setLoading(true);
     try {
       // Main query with all joins
@@ -138,6 +111,35 @@ export default function DashboardPage() {
       console.error('Error fetching properties:', error);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // Initial load effect
+  useEffect(() => {
+    const init = async () => {
+      await fetchDistricts();
+      await fetchProperties();
+    };
+    init();
+  }, [fetchProperties]);
+
+  async function fetchDistricts() {
+    try {
+      const { data, error } = await supabase
+        .from('locations')
+        .select('district')
+        .not('district', 'is', null)
+        .order('district');
+
+      if (error) {
+        console.error('Error fetching districts:', error);
+        return;
+      }
+
+      const uniqueDistricts = [...new Set(data.map(d => d.district))];
+      setDistricts(uniqueDistricts);
+    } catch (error) {
+      console.error('Error fetching districts:', error);
     }
   }
 

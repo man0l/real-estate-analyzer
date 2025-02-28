@@ -5,13 +5,10 @@ import { supabase } from '@/lib/supabase';
 import { Property } from '@/types/property';
 import PropertyThumbnail from '@/components/PropertyThumbnail';
 import PropertyModal from '@/components/PropertyModal';
-import Link from 'next/link';
-import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 
 export default function Home() {
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
   const [propertyTypes, setPropertyTypes] = useState<string[]>([]);
@@ -234,7 +231,7 @@ export default function Home() {
     }
   }, [filters]);
 
-  const fetchMarketStats = useCallback(async () => {
+  const fetchMarketStats = useCallback(() => {
     try {
       // Calculate stats from current properties
       const validProperties = properties.filter(p => {
@@ -355,21 +352,17 @@ export default function Home() {
     }
   }, [properties]);
 
+  // Initial load effect
   useEffect(() => {
     fetchFilterOptions();
+    fetchProperties();
     fetchMarketStats();
-    fetchProperties();
-  }, [fetchMarketStats, fetchProperties]);
-
-  // Add effect to refetch when filters change
-  useEffect(() => {
-    fetchProperties();
-  }, [filters, fetchProperties]);
+  }, [fetchProperties, fetchMarketStats]);
 
   // Add effect to update market stats when properties change
   useEffect(() => {
     fetchMarketStats();
-  }, [properties, fetchMarketStats]);
+  }, [fetchMarketStats]);
 
   // Fetch filter options from database
   async function fetchFilterOptions() {
