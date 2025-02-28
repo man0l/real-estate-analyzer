@@ -1,23 +1,34 @@
+import os
+import sys
+from dotenv import load_dotenv
+import traceback
+
+# Load environment variables from .env file
+if not load_dotenv():
+    print("Error: Could not load .env file")
+    sys.exit(1)
+
+# Check required environment variables
+required_vars = ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'DATABASE_URL']
+missing_vars = [var for var in required_vars if not os.getenv(var)]
+if missing_vars:
+    print(f"Error: Missing required environment variables: {', '.join(missing_vars)}")
+    sys.exit(1)
+
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 from bs4 import BeautifulSoup
 import json
 import time
 import re
-import os
 import requests
 import signal
-import sys
 from urllib.parse import urljoin
 import psycopg2
 from psycopg2.extras import Json
 from datetime import datetime
-from dotenv import load_dotenv
 from imot_scraper.image_utils import process_property_image
 
 # Load environment variables
-load_dotenv()
-
-# Database configuration
 DB_URL = os.getenv('DATABASE_URL', "postgresql://postgres.mbqpxqpvjpimntzjthcc:[YOUR-PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:5432/postgres")
 
 def init_database():

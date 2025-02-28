@@ -5,10 +5,17 @@ from urllib.parse import urlparse
 import hashlib
 from typing import Optional
 import traceback
+from dotenv import load_dotenv
 
-# Initialize Supabase client
+# Load environment variables
+load_dotenv()
+
+# Initialize Supabase client with error handling
 supabase_url = os.getenv('NEXT_PUBLIC_SUPABASE_URL')
 supabase_key = os.getenv('NEXT_PUBLIC_SUPABASE_ANON_KEY')
+
+if not supabase_url or not supabase_key:
+    raise ValueError("Missing required environment variables: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY must be set")
 
 print(f"Initializing Supabase client with URL: {supabase_url}")
 supabase: Client = create_client(supabase_url, supabase_key)

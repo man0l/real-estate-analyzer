@@ -10,10 +10,13 @@ load_dotenv()
 
 # Configuration
 DB_URL = os.getenv('DATABASE_URL')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+OPENAI_VISION_API_KEY = os.getenv('OPENAI_VISION_API_KEY')
+OPENAI_VISION_BASE_URL = os.getenv('OPENAI_VISION_BASE_URL')
 
 # Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_VISION_API_KEY, base_url=OPENAI_VISION_BASE_URL)
+model = "qwen/qwen-vl-plus:free" # "gpt-4o-mini"
+
 
 def analyze_image(image_url: str) -> Tuple[bool, bool, bool, str]:
     """
@@ -23,7 +26,7 @@ def analyze_image(image_url: str) -> Tuple[bool, bool, bool, str]:
     try:
         print(f"Analyzing image URL: {image_url}")
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=model,
             messages=[
                 {
                     "role": "user",
@@ -37,6 +40,7 @@ def analyze_image(image_url: str) -> Tuple[bool, bool, bool, str]:
    - Architectural floor plans or drawings
    - Construction plans or sketches
    - Any type of 2D layout or blueprint
+   - Stairs, corridors, or other non-interior spaces
    
    Answer YES only if it shows actual photographs of interior rooms (living room, bedroom, kitchen, etc)
 
@@ -106,13 +110,8 @@ CONFIDENCE: high/medium/low"""
                 print("Not renovated: Image shows signs of unfinished work or needed renovation")
         else:
             print("Not interior: Exterior shot, floor plan, or blueprint")
-        
-        # Only return results if confidence is medium or high
-        if confidence == 'low':
-            print("Skipping: Low confidence in analysis")
-            return None, None, None, None
             
-        # Return all values regardless of interior status
+        # Return all values regardless of confidence level
         return is_renovated, is_furnished, is_interior, confidence
         
     except Exception as e:
@@ -139,9 +138,7 @@ def get_properties_to_analyze():
             FROM properties p
             LEFT JOIN construction_info ci ON ci.property_id = p.id
             JOIN FirstImages i ON i.property_id = p.id
-            WHERE (ci.is_renovated IS NULL 
-               OR ci.is_furnished IS NULL
-               OR ci.property_id IS NULL)
+            WHERE ci.property_id IS NULL
             AND p.id != 'metadata'
             ORDER BY p.id
         """)
@@ -182,8 +179,8 @@ def update_property_analysis(property_id: str, is_renovated: bool, is_furnished:
         conn.close()
 
 def main():
-    if not OPENAI_API_KEY:
-        print("Error: OPENAI_API_KEY not found in environment variables")
+    if not OPENAI_VISION_API_KEY:
+        print("Error: OPENAI_VISION_API_KEY not found in environment variables")
         return
         
     print("Starting property analysis...")
@@ -198,7 +195,7 @@ def main():
         if is_renovated is not None and is_furnished is not None:
             update_property_analysis(property_id, is_renovated, is_furnished, is_interior, confidence)
         else:
-            print(f"Skipping property {property_id} due to low confidence or error")
+            print(f"Skipping property {property_id} due to error in analysis")
             
         # Sleep to respect rate limits
         time.sleep(1)
