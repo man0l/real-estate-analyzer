@@ -30,7 +30,7 @@ export default function ImageSlider({ images }: ImageSliderProps) {
     speed: 500,
     slidesToShow: 1,
     slidesToScroll: 1,
-    beforeChange: (_: any, next: number) => setCurrentImageIndex(next),
+    beforeChange: (_: number, next: number) => setCurrentImageIndex(next),
     adaptiveHeight: true,
   };
 

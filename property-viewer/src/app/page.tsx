@@ -1,13 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Property } from '@/types/property';
 import PropertyThumbnail from '@/components/PropertyThumbnail';
 import PropertyModal from '@/components/PropertyModal';
 import Link from 'next/link';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 
 export default function Home() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
   const [propertyTypes, setPropertyTypes] = useState<string[]>([]);
@@ -40,56 +44,7 @@ export default function Home() {
     avgPriceRenovated: 0
   });
 
-  useEffect(() => {
-    fetchFilterOptions();
-    fetchMarketStats();
-    fetchProperties();
-  }, []);
-
-  // Add effect to refetch when filters change
-  useEffect(() => {
-    fetchProperties();
-  }, [filters]);
-
-  // Add effect to update market stats when properties change
-  useEffect(() => {
-    fetchMarketStats();
-  }, [properties]);
-
-  // Fetch filter options from database
-  async function fetchFilterOptions() {
-    try {
-      // Fetch property types
-      const { data: typeData, error: typeError } = await supabase
-        .from('properties')
-        .select('type')
-        .not('type', 'is', null);
-
-      if (typeError) {
-        console.error('Error fetching property types:', typeError);
-      } else if (typeData) {
-        const types = [...new Set(typeData.map(p => p.type))].filter(Boolean).sort();
-        setPropertyTypes(types);
-      }
-
-      // Fetch districts
-      const { data: districtData, error: districtError } = await supabase
-        .from('locations')
-        .select('district')
-        .not('district', 'is', null);
-
-      if (districtError) {
-        console.error('Error fetching districts:', districtError);
-      } else if (districtData) {
-        const uniqueDistricts = [...new Set(districtData.map(d => d.district))].filter(Boolean).sort();
-        setDistricts(uniqueDistricts);
-      }
-    } catch (error) {
-      console.error('Error fetching filter options:', error);
-    }
-  }
-
-  async function fetchProperties() {
+  const fetchProperties = useCallback(async () => {
     setLoading(true);
     try {
       console.log('Starting property fetch with filters:', filters);
@@ -277,9 +232,9 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [filters]);
 
-  async function fetchMarketStats() {
+  const fetchMarketStats = useCallback(async () => {
     try {
       // Calculate stats from current properties
       const validProperties = properties.filter(p => {
@@ -398,18 +353,67 @@ export default function Home() {
     } catch (error) {
       console.error('Error calculating market stats:', error);
     }
+  }, [properties]);
+
+  useEffect(() => {
+    fetchFilterOptions();
+    fetchMarketStats();
+    fetchProperties();
+  }, [fetchMarketStats, fetchProperties]);
+
+  // Add effect to refetch when filters change
+  useEffect(() => {
+    fetchProperties();
+  }, [filters, fetchProperties]);
+
+  // Add effect to update market stats when properties change
+  useEffect(() => {
+    fetchMarketStats();
+  }, [properties, fetchMarketStats]);
+
+  // Fetch filter options from database
+  async function fetchFilterOptions() {
+    try {
+      // Fetch property types
+      const { data: typeData, error: typeError } = await supabase
+        .from('properties')
+        .select('type')
+        .not('type', 'is', null);
+
+      if (typeError) {
+        console.error('Error fetching property types:', typeError);
+      } else if (typeData) {
+        const types = [...new Set(typeData.map(p => p.type))].filter(Boolean).sort();
+        setPropertyTypes(types);
+      }
+
+      // Fetch districts
+      const { data: districtData, error: districtError } = await supabase
+        .from('locations')
+        .select('district')
+        .not('district', 'is', null);
+
+      if (districtError) {
+        console.error('Error fetching districts:', districtError);
+      } else if (districtData) {
+        const uniqueDistricts = [...new Set(districtData.map(d => d.district))].filter(Boolean).sort();
+        setDistricts(uniqueDistricts);
+      }
+    } catch (error) {
+      console.error('Error fetching filter options:', error);
+    }
   }
 
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Property Listings</h1>
-        <Link 
-          href="/dashboard"
+        <button 
+          onClick={() => router.push('/dashboard')}
           className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
         >
           View Dashboard
-        </Link>
+        </button>
       </div>
 
       <div className="bg-white shadow rounded-lg p-6 mb-6">

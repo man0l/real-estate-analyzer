@@ -6,8 +6,11 @@ import { Property } from '@/types/property';
 import Dashboard from '@/components/Dashboard';
 import DashboardFilters from '@/components/DashboardFilters';
 import Link from 'next/link';
+import { useRouter, usePathname } from 'next/navigation';
 
 export default function DashboardPage() {
+  const router = useRouter();
+  const pathname = usePathname();
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
   const [districts, setDistricts] = useState<string[]>([]);
@@ -52,7 +55,7 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       // Main query with all joins
-      let query = supabase
+      const query = supabase
         .from('properties')
         .select(`
           *,
@@ -146,12 +149,12 @@ export default function DashboardPage() {
     <div className="container mx-auto px-4 py-8">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Property Market Dashboard</h1>
-        <Link 
-          href="/"
+        <button 
+          onClick={() => router.push('/')}
           className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
         >
           Back to Properties
-        </Link>
+        </button>
       </div>
 
       {loading ? (
