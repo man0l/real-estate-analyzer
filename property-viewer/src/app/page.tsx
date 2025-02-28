@@ -1,14 +1,16 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Property } from '@/types/property';
 import PropertyThumbnail from '@/components/PropertyThumbnail';
 import PropertyModal from '@/components/PropertyModal';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
-export default function Home() {
+// Create a separate client component for the property list
+function PropertyList() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
   const [propertyTypes, setPropertyTypes] = useState<string[]>([]);
@@ -40,6 +42,32 @@ export default function Home() {
     avgPriceWithoutAct16: 0,
     avgPriceRenovated: 0
   });
+
+  // Handle URL-based property selection
+  useEffect(() => {
+    const propertyId = searchParams.get('propertyId');
+    if (propertyId && properties.length > 0) {
+      const property = properties.find(p => p.id === propertyId);
+      setSelectedProperty(property || null);
+    }
+  }, [searchParams, properties]);
+
+  const handlePropertySelect = (property: Property) => {
+    setSelectedProperty(property);
+    // Update URL with property ID
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('propertyId', property.id);
+    router.push(`/?${params.toString()}`);
+  };
+
+  const handleModalClose = () => {
+    setSelectedProperty(null);
+    // Remove propertyId from URL
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('propertyId');
+    const newUrl = params.toString() ? `/?${params.toString()}` : '/';
+    router.push(newUrl);
+  };
 
   const fetchProperties = useCallback(async () => {
     setLoading(true);
@@ -704,7 +732,7 @@ export default function Home() {
               <PropertyThumbnail
                 key={property.id}
                 property={property}
-                onClick={() => setSelectedProperty(property)}
+                onClick={() => handlePropertySelect(property)}
               />
             ))}
           </div>
@@ -714,10 +742,23 @@ export default function Home() {
           <PropertyModal
             property={selectedProperty}
             isOpen={!!selectedProperty}
-            onClose={() => setSelectedProperty(null)}
+            onClose={handleModalClose}
           />
         )}
       </div>
     </div>
+  );
+}
+
+// Main page component wrapped in Suspense
+export default function Home() {
+  return (
+    <Suspense fallback={
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    }>
+      <PropertyList />
+    </Suspense>
   );
 }
