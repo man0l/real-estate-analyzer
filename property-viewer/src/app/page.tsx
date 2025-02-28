@@ -43,31 +43,37 @@ function PropertyList() {
     avgPriceRenovated: 0
   });
 
-  // Handle URL-based property selection
-  useEffect(() => {
-    const propertyId = searchParams.get('propertyId');
-    if (propertyId && properties.length > 0) {
-      const property = properties.find(p => p.id === propertyId);
-      setSelectedProperty(property || null);
+  const fetchFilterOptions = useCallback(async () => {
+    try {
+      // Fetch property types
+      const { data: typeData, error: typeError } = await supabase
+        .from('properties')
+        .select('type')
+        .not('type', 'is', null);
+
+      if (typeError) {
+        console.error('Error fetching property types:', typeError);
+      } else if (typeData) {
+        const types = [...new Set(typeData.map(p => p.type))].filter(Boolean).sort();
+        setPropertyTypes(types);
+      }
+
+      // Fetch districts
+      const { data: districtData, error: districtError } = await supabase
+        .from('locations')
+        .select('district')
+        .not('district', 'is', null);
+
+      if (districtError) {
+        console.error('Error fetching districts:', districtError);
+      } else if (districtData) {
+        const uniqueDistricts = [...new Set(districtData.map(d => d.district))].filter(Boolean).sort();
+        setDistricts(uniqueDistricts);
+      }
+    } catch (error) {
+      console.error('Error fetching filter options:', error);
     }
-  }, [searchParams, properties]);
-
-  const handlePropertySelect = (property: Property) => {
-    setSelectedProperty(property);
-    // Update URL with property ID
-    const params = new URLSearchParams(searchParams.toString());
-    params.set('propertyId', property.id);
-    router.push(`/?${params.toString()}`);
-  };
-
-  const handleModalClose = () => {
-    setSelectedProperty(null);
-    // Remove propertyId from URL
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete('propertyId');
-    const newUrl = params.toString() ? `/?${params.toString()}` : '/';
-    router.push(newUrl);
-  };
+  }, []);
 
   const fetchProperties = useCallback(async () => {
     setLoading(true);
@@ -259,7 +265,9 @@ function PropertyList() {
     }
   }, [filters]);
 
-  const fetchMarketStats = useCallback(() => {
+  const calculateMarketStats = useCallback(() => {
+    if (!properties.length) return;
+
     try {
       // Calculate stats from current properties
       const validProperties = properties.filter(p => {
@@ -380,50 +388,45 @@ function PropertyList() {
     }
   }, [properties]);
 
-  // Initial load effect
+  // Initial data load
   useEffect(() => {
-    fetchFilterOptions();
-    fetchProperties();
-    fetchMarketStats();
-  }, [fetchProperties, fetchMarketStats]);
+    const loadInitialData = async () => {
+      await fetchFilterOptions();
+      await fetchProperties();
+    };
+    loadInitialData();
+  }, [fetchFilterOptions, fetchProperties]);
 
-  // Add effect to update market stats when properties change
+  // Update stats when properties change
   useEffect(() => {
-    fetchMarketStats();
-  }, [fetchMarketStats]);
+    calculateMarketStats();
+  }, [properties, calculateMarketStats]);
 
-  // Fetch filter options from database
-  async function fetchFilterOptions() {
-    try {
-      // Fetch property types
-      const { data: typeData, error: typeError } = await supabase
-        .from('properties')
-        .select('type')
-        .not('type', 'is', null);
-
-      if (typeError) {
-        console.error('Error fetching property types:', typeError);
-      } else if (typeData) {
-        const types = [...new Set(typeData.map(p => p.type))].filter(Boolean).sort();
-        setPropertyTypes(types);
-      }
-
-      // Fetch districts
-      const { data: districtData, error: districtError } = await supabase
-        .from('locations')
-        .select('district')
-        .not('district', 'is', null);
-
-      if (districtError) {
-        console.error('Error fetching districts:', districtError);
-      } else if (districtData) {
-        const uniqueDistricts = [...new Set(districtData.map(d => d.district))].filter(Boolean).sort();
-        setDistricts(uniqueDistricts);
-      }
-    } catch (error) {
-      console.error('Error fetching filter options:', error);
+  // Handle URL-based property selection
+  useEffect(() => {
+    const propertyId = searchParams.get('propertyId');
+    if (propertyId && properties.length > 0) {
+      const property = properties.find(p => p.id === propertyId);
+      setSelectedProperty(property || null);
     }
-  }
+  }, [searchParams, properties]);
+
+  const handlePropertySelect = useCallback((property: Property) => {
+    setSelectedProperty(property);
+    // Update URL with property ID
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('propertyId', property.id);
+    router.push(`/?${params.toString()}`);
+  }, [searchParams, router]);
+
+  const handleModalClose = useCallback(() => {
+    setSelectedProperty(null);
+    // Remove propertyId from URL
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('propertyId');
+    const newUrl = params.toString() ? `/?${params.toString()}` : '/';
+    router.push(newUrl);
+  }, [router, searchParams]);
 
   return (
     <div className="container mx-auto px-4 py-8">
